@@ -447,13 +447,44 @@ def t_screens(page):
     st = api(page, '/api/state')
     assert not any(c['sample'] for c in st['courses']) and [c['name'] for c in st['courses'] if not c['deleted_at']] == COURSES
 
+@step('ready-made degree plan: fresh install gets the semester; an existing semester only gains what is ticked; applying twice adds nothing')
+def t_plan(page):
+    form = 'form[data-submit=apply]'
+    data3 = tempfile.mkdtemp(prefix='ijos-e2e-plan-'); start_server(PORT2, data3)
+    base2 = f'http://127.0.0.1:{PORT2}'
+    go(page, '/', base2)
+    page.locator('[data-act=plan]').click(); page.wait_for_timeout(500)
+    assert page.locator(f'{form} input:checked').count() == 8
+    shot(page, '35-plan')
+    page.locator(f'{form} button.btn-primary').click(); page.wait_for_timeout(1500)
+    st = api(page, '/api/state')
+    assert [s['status'] for s in st['semesters']] == ['active'], st['semesters']
+    assert len(st['years']) == 1 and len(st['courses']) == 8 and st['settings'].get('onboarded') == '1' and st['settings'].get('program')
+    assert sum(c['credits'] or 0 for c in st['courses']) == 25 and [c['counts_credits'] for c in st['courses'] if c['credits'] is None] == [0]
+    assert page.url.endswith('#/semester/1'), page.url
+    stop_server(PORT2); shutil.rmtree(data3, ignore_errors=True)
+    # The main instance already has "שנה א׳ · סמסטר א׳" with its own courses, one of them also in the plan.
+    go(page, '/semester/1')
+    page.locator('a[href="#/plan"]').click(); page.wait_for_timeout(500)
+    sem_a = page.locator(f'{form} fieldset').first
+    assert sem_a.locator('input:checked').count() == 0, 'a semester that already has courses is not pre-ticked'
+    expect(sem_a.locator('label', has_text='מבוא למערכות מידע').locator('input')).to_be_disabled()
+    sem_a.locator('label', has_text='משפט עסקי').locator('input').check()
+    page.locator(f'{form} button.btn-primary').click(); page.wait_for_timeout(1500)
+    st = api(page, '/api/state')
+    assert len([y for y in st['years'] if not y['deleted_at']]) == 1 and len([s for s in st['semesters'] if not s['deleted_at']]) == 1
+    assert [c['name'] for c in st['courses'] if not c['deleted_at']] == COURSES + ['משפט עסקי']
+    assert page.url.endswith('#/semester/1'), page.url
+    go(page, '/plan')
+    assert page.locator(f'{form} input:disabled').count() == 2 and page.locator(f'{form} input:checked').count() == 0
+
 start_server(PORT, DATA)
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1440, 'height': 900}, locale='he-IL', timezone_id='Asia/Jerusalem')
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.on('console', lambda m: m.type == 'error' and errors.append(m.text))
-    for t in [t_onboard, t_import, t_dash, t_topics, t_html, t_multi_topic, t_note, t_resume, t_unclear, t_office, t_assignment, t_reminder, t_search, t_summary, t_topic_summary, t_trash, t_states, t_narrow, t_backup_restore, t_restart, t_theme, t_a11y, t_long, t_screens]:
+    for t in [t_onboard, t_import, t_dash, t_topics, t_html, t_multi_topic, t_note, t_resume, t_unclear, t_office, t_assignment, t_reminder, t_search, t_summary, t_topic_summary, t_trash, t_states, t_narrow, t_backup_restore, t_restart, t_theme, t_a11y, t_long, t_screens, t_plan]:
         t(page)
     b.close()
 for port in list(procs): stop_server(port)

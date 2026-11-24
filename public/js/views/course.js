@@ -31,7 +31,7 @@ export function semester(root, [id]) {
       <ul class="plain">${sems.map(x => html`<li class="row-between"><a href="#/semester/${x.id}">${byId('years', x.year_id)?.name} · ${x.name}</a>
         <label>סטטוס <select name="status" data-change="field" data-table="semesters" data-id="${x.id}" data-refresh>${options({ active: 'פעיל', planned: 'עתידי', done: 'הסתיים' }, x.status)}</select></label></li>`)}</ul>
       <p class="hint">רק סמסטרים פעילים מוצגים בתפריט. סמסטרים עתידיים נשמרים ברקע עד שתפעילו אותם.</p>
-      <button class="btn btn-sm" data-act="add-sem">+ סמסטר</button></section>
+      <div class="actions"><button class="btn btn-sm" data-act="add-sem">+ סמסטר</button><a class="btn btn-sm" href="#/plan">הוספה מתוכנית לימודים מוכנה</a></div></section>
   </div>`);
   bind(root, {
     ...fieldHandlers,

@@ -1,17 +1,19 @@
 // First-run onboarding: program → year + semester → courses → materials (or skip). Everything stays editable later.
 import { html, raw, str, api, toast } from '../util.js';
-import { S, T, create, reload } from '../store.js';
+import { S, T, create, reload, activeSemester } from '../store.js';
 import { bind, pickFiles } from '../ui.js';
 import { LOGO } from '../app.js';
+import { PLANS, matchPlan } from '../plans.js';
 
 export const PALETTE = ['#4f3df0', '#e2562f', '#1d9a6c', '#d6409f', '#2f7de2', '#c98a00', '#7a4fd6', '#0f8f9e'];
 const done = () => api('PUT', '/api/settings/onboarded', { value: '1' });
+const logoHead = () => html`<div class="onboard-logo">${raw(LOGO)}<div><p class="eyebrow" dir="ltr">IJOS · Ido Joffe's OS</p><p class="muted small" style="margin:0">הכול נשמר רק במחשב שלך. בלי חשבון ובלי ענן.</p></div></div>`;
 
 export function welcome(root, _, query) {
   const step = Number(query.get('step')) || 1;
   const sem = T('semesters').find(s => s.id === Number(query.get('sem')));
   const stepper = html`<ol class="steps" aria-label="שלב ${step} מתוך 3">${[1, 2, 3].map(i => html`<li class="${i <= step ? 'on' : ''}"></li>`)}</ol>`;
-  const head = html`<div class="onboard-logo">${raw(LOGO)}<div><p class="eyebrow" dir="ltr">IJOS · Ido Joffe's OS</p><p class="muted small" style="margin:0">הכול נשמר רק במחשב שלך. בלי חשבון ובלי ענן.</p></div></div>`;
+  const head = logoHead();
 
   if (step === 1) {
     root.innerHTML = str(html`<div class="onboard">${head}<h1>כל התואר. מקום אחד.</h1>
@@ -22,6 +24,7 @@ export function welcome(root, _, query) {
         <div class="actions"><button class="btn btn-primary">המשך לקורסים</button></div>
       </form>
       <div class="choice">
+        <button type="button" data-act="plan"><strong>תוכנית לימודים מוכנה</strong><span class="small muted">הסמסטרים, הקורסים ונקודות הזכות נוצרים בשבילכם. כרגע: ${PLANS.map(p => html`<bdi>${p.name}, ${p.school}</bdi>`)}.</span></button>
         <button type="button" data-act="sample"><strong>רק להציץ קודם</strong><span class="small muted">טעינת סמסטר דוגמה עם שני קורסים מומצאים. מסומן "דוגמה", ונמחק בלחיצה אחת בהגדרות.</span></button>
         <button type="button" data-act="skip"><strong>לדלג ולהתחיל ריק</strong><span class="small muted">אפשר להוסיף סמסטר וקורסים מאוחר יותר מעמוד הבית.</span></button>
       </div></div>`);
@@ -32,6 +35,7 @@ export function welcome(root, _, query) {
         const s = await create('semesters', { year_id: y.id, name: d.semester.trim(), status: 'active', sort: T('semesters').length + 1 });
         location.hash = `#/welcome?step=2&sem=${s.id}`;
       },
+      plan: () => { location.hash = '#/plan'; },
       sample: async () => { await api('POST', '/api/sample'); await done(); await reload(); toast('נטען סמסטר דוגמה. כל מה שמסומן "דוגמה" מומצא.'); location.hash = '#/'; },
       skip: async () => { await done(); await reload(); location.hash = '#/'; },
     });
@@ -69,5 +73,48 @@ export function welcome(root, _, query) {
   bind(root, {
     files: async () => { await done(); await reload(); location.hash = '#/'; pickFiles({}); },
     finish: async () => { await done(); await reload(); toast('מוכנים. בהצלחה בסמסטר!'); location.hash = '#/'; },
+  });
+}
+
+// Ready-made degree plan: tick the courses to add. It only adds. Existing years, semesters and courses are matched by name and left alone.
+export function plan(root) {
+  const p = PLANS[0]; // ponytail: one plan today. Add a chooser here when a second plan lands in plans.js.
+  const match = () => matchPlan(p, { years: T('years'), semesters: T('semesters'), courses: T('courses') });
+  const fresh = !T('semesters').length;
+  root.innerHTML = str(html`<div class="onboard">${fresh ? logoHead() : ''}<h1>תוכנית לימודים מוכנה</h1>
+    <p class="hero-date"><bdi>${p.name}</bdi> · <bdi>${p.school}</bdi>. סמנו מה להוסיף. שום דבר קיים לא משתנה, ואפשר לערוך ולמחוק הכול אחר כך.</p>
+    <form class="card" data-submit="apply">
+      ${match().map(g => html`<fieldset><legend><bdi>${g.yearName}</bdi> · <bdi>${g.name}</bdi></legend>
+        ${g.busy ? html`<p class="hint">בסמסטר הזה כבר יש לכם קורסים, אז שום דבר לא מסומן מראש. סמנו רק מה שחסר.</p>` : ''}
+        ${g.courses.map(c => html`<label class="check"><input type="checkbox" name="c" value="${c.id}" ${raw(c.exists ? 'disabled' : g.busy ? '' : 'checked')}> <bdi>${c.name}</bdi>
+          <span class="muted small">${c.exists ? 'כבר קיים' : c.credits == null ? 'לא נספר בנק״ז' : `${c.credits} נק״ז`}</span></label>`)}</fieldset>`)}
+      <p class="hint">${p.source}</p>
+      <p class="hint">סמסטר חדש מסומן כפעיל אם עוד אין לכם סמסטר פעיל, ואחרת כ"עתידי". אפשר לשנות בעמוד הסמסטר.</p>
+      <div class="actions"><button class="btn btn-primary">הוספת הקורסים המסומנים</button><a class="btn" href="${fresh ? '#/welcome' : '#/'}">ביטול</a></div>
+    </form></div>`);
+  bind(root, {
+    apply: async f => {
+      const picked = new Set([...f.querySelectorAll('[name=c]:checked')].map(i => i.value));
+      const btn = f.querySelector('button');
+      btn.disabled = true; // a second click must not add everything twice
+      let first, n = 0;
+      try {
+        for (let i = 0; i < match().length; i++) {
+          const g = match()[i]; // matched again each round: the year created for one semester is reused by the next
+          const add = g.courses.filter(c => picked.has(c.id) && !c.exists);
+          if (!add.length) continue;
+          const year = g.year || await create('years', { name: g.yearName, sort: T('years').length + 1 });
+          const sem = g.sem || await create('semesters', { year_id: year.id, name: g.name, status: activeSemester() ? 'planned' : 'active', sort: T('semesters').length + 1 });
+          const base = T('courses').filter(c => c.semester_id === sem.id).length;
+          for (const [k, c] of add.entries()) await create('courses', { semester_id: sem.id, name: c.name, credits: c.credits, counts_credits: c.credits != null, color: PALETTE[(base + k) % PALETTE.length], sort: base + k + 1 });
+          first ??= sem; n += add.length;
+        }
+      } finally { btn.disabled = false; }
+      if (!n) { toast('לא סומן אף קורס חדש'); return; }
+      if (!S.data.settings.program) await api('PUT', '/api/settings/program', { value: p.name });
+      await done(); await reload();
+      toast(`נוספו ${n} קורסים. שמות, צבעים ונקודות זכות אפשר לשנות בכל רגע.`);
+      location.hash = `#/semester/${first.id}`;
+    },
   });
 }

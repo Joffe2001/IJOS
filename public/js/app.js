@@ -12,6 +12,7 @@ import * as onboard from './views/onboard.js';
 const routes = [
   [/^\/$/, home.dashboard],
   [/^\/welcome$/, onboard.welcome],
+  [/^\/plan$/, onboard.plan],
   [/^\/inbox$/, course.inbox],
   [/^\/semester\/(\d+)$/, course.semester],
   [/^\/course\/(\d+)(?:\/(\w+))?$/, course.course],

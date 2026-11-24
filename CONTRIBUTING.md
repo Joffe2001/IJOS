@@ -21,6 +21,10 @@ bash test/run_e2e.sh  # browser walkthrough (needs: pip install playwright && py
 
 Use `IJOS_DATA=<folder>` to run against a throwaway data folder while developing.
 
+## Adding a degree plan
+
+Ready-made plans are plain data in `public/js/plans.js`: years → semesters → courses as `[name, credits]` (`null` credits = not counted). Copy an entry and keep the shape. A plan must follow a curriculum the institution has published, and `source` must say which one and for which year. Leave out anything the document does not state clearly. `npm test` checks the shape.
+
 ## Changes to the data model
 
 - Bump `SCHEMA_VERSION` in `server/db.js` and add a migration step that keeps every existing record.
