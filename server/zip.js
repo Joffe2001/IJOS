@@ -3,7 +3,8 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
-export function readZip(file) {
+// budget = total bytes all reads together may produce (Office previews pass a small one).
+export function readZip(file, { budget = Infinity } = {}) {
   const fd = fs.openSync(file, 'r');
   const size = fs.fstatSync(fd).size;
   const readAt = (pos, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, pos); return b; };
@@ -24,9 +25,10 @@ export function readZip(file) {
     p += 46 + nlen + xlen + clen;
   }
   const read = (name, limit = 1100 * 1048576) => {
-    if (entries.get(name)?.usize > limit) throw new Error('Zip entry too large');
     const e = entries.get(name);
     if (!e) return null;
+    if (e.usize > limit || e.csize > limit || e.usize > budget) throw new Error('Zip entry too large');
+    budget -= e.usize;
     const lh = readAt(e.off, 30);
     const data = readAt(e.off + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28), e.csize);
     if (e.method === 0) return data;

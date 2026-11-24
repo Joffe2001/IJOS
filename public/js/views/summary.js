@@ -14,6 +14,8 @@ const head = (c, sub) => courseCrumbs(c.id, [['סיכומים', `#/summary/${c.i
 
 // A summary whose folder was deleted shows at the top level instead of disappearing.
 function folderOf(x, cid) { const f = x.folder_id && byId('summary_folders', x.folder_id); return f && !f.deleted_at && f.course_id === cid ? f.id : null; }
+// Folder ids from here up to the top; stops on a loop so bad data cannot hang the page.
+function ancestors(id) { const out = []; for (let f = id; f && !out.includes(f) && out.length < 50; f = byId('summary_folders', f)?.parent_id) out.push(f); return out; }
 function folderPath(id) { const out = []; for (let f = id && byId('summary_folders', id); f && out.length < 20; f = f.parent_id && byId('summary_folders', f.parent_id)) out.unshift(f.name); return out.join(' / '); }
 function folderOptions(cid, sel, skip = null) {
   const out = [], walk = (pid, depth) => foldersOf(cid).filter(f => (f.parent_id || null) === pid && f.id !== skip).sort(byOrder).forEach(f => { out.push(html`<option value="${f.id}" ${f.id === sel ? raw('selected') : ''}>${'  '.repeat(depth)}📁 ${f.name}</option>`); walk(f.id, depth + 1); });
@@ -38,7 +40,7 @@ export function summary(root, [cid], query) {
   const sel = byId('summary_chapters', query.get('s'));
   const cur = sel && !sel.deleted_at && sel.course_id === c.id ? sel : null;
   const editing = !!cur && query.get('edit') === '1';
-  const open = new Set(); for (let f = cur && folderOf(cur, c.id); f; f = byId('summary_folders', f)?.parent_id) open.add(f);
+  const open = new Set(cur ? ancestors(folderOf(cur, c.id)) : []);
 
   const tree = pid => {
     const fs = folders.filter(f => (f.parent_id || null) === pid).sort(byOrder);
@@ -160,7 +162,7 @@ async function folderMenu(c, f) {
   });
   if (!v) return;
   // a folder cannot move into its own subfolder
-  let p = v.parent_id ? +v.parent_id : null; for (let k = p; k; k = byId('summary_folders', k)?.parent_id) if (k === f.id) p = f.parent_id;
+  let p = v.parent_id ? +v.parent_id : null; if (ancestors(p).includes(f.id)) p = f.parent_id;
   await patch('summary_folders', f.id, { name: v.name.trim(), parent_id: p });
   await refresh();
 }

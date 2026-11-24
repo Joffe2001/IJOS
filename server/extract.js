@@ -74,9 +74,9 @@ export function htmlToText(html) {
 export function extract(file, name, buf) {
   const ext = extOf(name);
   try {
-    if (ext === 'docx') { const z = readZip(file); try { const p = docx(z); return { preview: { type: 'doc', paragraphs: p }, text: p.map(x => x.text).join('\n'), status: 'extracted' }; } finally { z.close(); } }
-    if (ext === 'pptx') { const z = readZip(file); try { const s = pptx(z); return { preview: { type: 'slides', slides: s }, text: s.map(x => x.join('\n')).join('\n\n'), status: 'extracted' }; } finally { z.close(); } }
-    if (ext === 'xlsx') { const z = readZip(file); try { const s = xlsx(z); return { preview: { type: 'sheet', sheets: s }, text: s.map(x => x.name + '\n' + x.rows.map(r => r.join(' ')).join('\n')).join('\n'), status: 'extracted' }; } finally { z.close(); } }
+    if (ext === 'docx') { const z = readZip(file, { budget: 64 * 1048576 }); try { const p = docx(z); return { preview: { type: 'doc', paragraphs: p }, text: p.map(x => x.text).join('\n'), status: 'extracted' }; } finally { z.close(); } }
+    if (ext === 'pptx') { const z = readZip(file, { budget: 64 * 1048576 }); try { const s = pptx(z); return { preview: { type: 'slides', slides: s }, text: s.map(x => x.join('\n')).join('\n\n'), status: 'extracted' }; } finally { z.close(); } }
+    if (ext === 'xlsx') { const z = readZip(file, { budget: 64 * 1048576 }); try { const s = xlsx(z); return { preview: { type: 'sheet', sheets: s }, text: s.map(x => x.name + '\n' + x.rows.map(r => r.join(' ')).join('\n')).join('\n'), status: 'extracted' }; } finally { z.close(); } }
     if (ext === 'html' || ext === 'htm') return { preview: null, text: htmlToText(buf().toString('utf8')), status: 'extracted' };
     if (['txt', 'md', 'markdown', 'csv', 'js', 'ts', 'json', 'py', 'sql', 'css'].includes(ext)) return { preview: null, text: buf().toString('utf8'), status: 'extracted' };
     return { preview: null, text: null, status: 'unsupported' };

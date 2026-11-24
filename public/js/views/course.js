@@ -253,7 +253,7 @@ function materials(c, query) {
 }
 export function folderPath(id) {
   const parts = [];
-  for (let f = byId('folders', id); f; f = f.parent_id ? byId('folders', f.parent_id) : null) parts.unshift(f.name);
+  for (let f = byId('folders', id); f && parts.length < 50; f = f.parent_id ? byId('folders', f.parent_id) : null) parts.unshift(f.name);
   return parts.join(' / ');
 }
 export async function moveResource(r) {

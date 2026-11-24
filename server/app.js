@@ -314,7 +314,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       else {
         zip = readZip(got.tmp);
         if (!zip.has('manifest.json') || !zip.has('study.db')) throw httpErr(400, 'הקובץ אינו גיבוי של IJOS (חסרים manifest.json או study.db)');
-        manifest = JSON.parse(zip.read('manifest.json').toString('utf8'));
+        manifest = JSON.parse(zip.read('manifest.json', 1048576).toString('utf8'));
         if (!['ijos', 'study-os'].includes(manifest.app)) throw httpErr(400, 'הקובץ אינו גיבוי של IJOS'); // 'study-os' = backups made before the rename
         fs.writeFileSync(dbTmp, zip.read('study.db'));
       }
@@ -450,16 +450,27 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     return { file, name: `IJOS - ${mdName(c.name)}.zip` };
   }
 
+  // A folder whose parent chain loops back on itself is moved to the top level (imported data is untrusted).
+  function breakCycles(table, cid) {
+    const parent = new Map(q(`SELECT id, parent_id FROM ${table} WHERE course_id=?`, cid).map(r => [r.id, r.parent_id]));
+    for (const id of parent.keys()) {
+      const seen = new Set([id]);
+      for (let p = parent.get(id); p != null; p = parent.get(p)) {
+        if (seen.has(p) || !parent.has(p)) { run(`UPDATE ${table} SET parent_id=NULL WHERE id=?`, id); parent.set(id, null); break; }
+        seen.add(p);
+      }
+    }
+  }
   async function shareInspect(req) {
     const got = await receiveFile(req);
     try {
       const zip = readZip(got.tmp);
       try {
         if (!zip.has('manifest.json') || !zip.has('course.json')) throw httpErr(400, 'זה לא קובץ שיתוף קורס של IJOS');
-        const m = JSON.parse(zip.read('manifest.json').toString('utf8'));
+        const m = JSON.parse(zip.read('manifest.json', 1048576).toString('utf8'));
         if (m.app !== 'ijos' || m.kind !== 'course') throw httpErr(400, 'זה לא קובץ שיתוף קורס של IJOS');
         if (m.format > SHARE_FORMAT) throw httpErr(400, 'הקובץ נוצר בגרסה חדשה יותר של IJOS. עדכנו את IJOS ונסו שוב.');
-        const d = JSON.parse(zip.read('course.json').toString('utf8'));
+        const d = JSON.parse(zip.read('course.json', 64 * 1048576).toString('utf8'));
         if (!d.course?.name || !Array.isArray(d.resources)) throw httpErr(400, 'קובץ השיתוף פגום');
         // Every file must be present and match its fingerprint, otherwise nothing is imported.
         for (const s of new Set(d.resources.map(r => r.blob_sha).filter(Boolean))) {
@@ -483,7 +494,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     if (!sem || sem.deleted_at) throw httpErr(400, 'בחרו סמסטר');
     const zip = readZip(p.share);
     try {
-      const d = JSON.parse(zip.read('course.json').toString('utf8'));
+      const d = JSON.parse(zip.read('course.json', 64 * 1048576).toString('utf8'));
       const shas = [...new Set(d.resources.map(r => r.blob_sha).filter(Boolean))];
       for (const s of shas) if (!fs.existsSync(blobPath(s))) { fs.mkdirSync(path.dirname(blobPath(s)), { recursive: true }); fs.writeFileSync(blobPath(s), zip.read(`blobs/${s}`)); }
       const str = v => v == null ? '' : String(v);
@@ -499,6 +510,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         const folders = list('folders');
         for (const f of folders) map.f[f.id] = insert('folders', { course_id: cid, name: str(f.name) || 'תיקייה', sort: Number(f.sort) || 0 }).id;
         for (const f of folders) if (map.f[f.parent_id]) run('UPDATE folders SET parent_id=? WHERE id=?', map.f[f.parent_id], map.f[f.id]);
+        breakCycles('folders', cid);
         for (const r of list('resources')) {
           const sha = r.blob_sha && shas.includes(r.blob_sha) ? r.blob_sha : null;
           const fname = sha ? safeName(r.original_name) : null;
@@ -516,6 +528,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         const sfs = list('summary_folders');
         for (const f of sfs) map.sf[f.id] = insert('summary_folders', { course_id: cid, name: str(f.name) || 'תיקייה', sort: Number(f.sort) || 0 }).id;
         for (const f of sfs) if (map.sf[f.parent_id]) run('UPDATE summary_folders SET parent_id=? WHERE id=?', map.sf[f.parent_id], map.sf[f.id]);
+        breakCycles('summary_folders', cid);
         for (const s of list('chapters')) map.ch[s.id] = insert('summary_chapters', { course_id: cid, topic_id: map.t[s.topic_id] || null, folder_id: map.sf[s.folder_id] || null, title: str(s.title) || 'סיכום', body_md: str(s.body_md), sort: Number(s.sort) || 0 }).id;
         link('summary_sources', ['chapter_id', map.ch], ['resource_id', map.r]);
         for (const a of list('assignments')) map.a[a.id] = insert('assignments', { course_id: cid, title: str(a.title) || 'מטלה', instructions_md: str(a.instructions_md), due_date: a.due_date ? str(a.due_date) : null, due_time: a.due_time ? str(a.due_time) : null, status: 'not_started' }).id;
@@ -577,7 +590,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     ['DELETE', /^\/api\/sample$/, () => removeSample()],
     ['GET', /^\/api\/rows\/(\w+)\/(\d+)$/, (m) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return getRow(m[1], +m[2]) || (() => { throw httpErr(404, 'not found'); })(); }],
     ['POST', /^\/api\/rows\/(\w+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return insert(m[1], fileSafe(b)); }],
-    ['PATCH', /^\/api\/rows\/(\w+)\/(\d+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return update(m[1], +m[2], fileSafe(b)); }],
+    ['PATCH', /^\/api\/rows\/(\w+)\/(\d+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); if (['folders', 'summary_folders'].includes(m[1]) && b?.parent_id != null) { for (let p = Number(b.parent_id), n = 0; p; p = getRow(m[1], p)?.parent_id, n++) if (p === +m[2] || n > 100) throw httpErr(400, 'אי אפשר להעביר תיקייה לתוך עצמה'); } return update(m[1], +m[2], fileSafe(b)); }],
     ['DELETE', /^\/api\/rows\/(\w+)\/(\d+)$/, (m, b, p) => {
       const [t, id] = [m[1], +m[2]];
       if (!userTable(t)) throw httpErr(404, 'unknown');

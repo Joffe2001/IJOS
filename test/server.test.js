@@ -455,3 +455,24 @@ test('summaries in folders: create, nest, move, export with folder path, version
   assert.equal(parent.name, 'פרק 1'); assert.equal(f2.find(f => f.id === parent.parent_id).name, 'מבחן');
   await app.stop(); await b.stop();
 });
+
+test('folder loops are refused or broken; zip metadata entries are size-capped', async () => {
+  const app = await start(tmp());
+  await app.call('POST', '/api/rows/years', { name: 'א' }); await app.call('POST', '/api/rows/semesters', { year_id: 1, name: 'א' });
+  const c = (await app.call('POST', '/api/rows/courses', { semester_id: 1, name: 'ק' })).body;
+  const a = (await app.call('POST', '/api/rows/summary_folders', { course_id: c.id, name: 'a' })).body;
+  const b = (await app.call('POST', '/api/rows/summary_folders', { course_id: c.id, name: 'b', parent_id: a.id })).body;
+  assert.equal((await app.call('PATCH', `/api/rows/summary_folders/${a.id}`, { parent_id: b.id })).status, 400, 'cannot move a folder into its child');
+  // shared course whose folders point at each other
+  const f = path.join(tmp(), 'loop.zip');
+  writeZip(f, [{ name: 'manifest.json', data: Buffer.from('{"app":"ijos","kind":"course","format":1}') }, { name: 'course.json', data: Buffer.from(JSON.stringify({ course: { name: 'לולאה' }, resources: [], summary_folders: [{ id: 1, parent_id: 2, name: 'x' }, { id: 2, parent_id: 1, name: 'y' }], folders: [{ id: 5, parent_id: 5, name: 'self' }] })) }]);
+  const tok = (await app.call('POST', '/api/share/inspect', fs.readFileSync(f))).body.token;
+  const nc = (await app.call('POST', '/api/share/apply', { token: tok, semester_id: 1 })).body.course;
+  const st = (await app.call('GET', '/api/state')).body;
+  assert.ok(st.summary_folders.filter(x => x.course_id === nc.id).some(x => x.parent_id === null), 'loop broken');
+  assert.ok(st.folders.filter(x => x.course_id === nc.id).every(x => x.parent_id === null));
+  // manifest declared larger than 1 MB is refused before inflating
+  const big = path.join(tmp(), 'big.zip'); writeZip(big, [{ name: 'manifest.json', data: Buffer.alloc(2 * 1048576, 32) }, { name: 'course.json', data: Buffer.from('{}') }]);
+  assert.equal((await app.call('POST', '/api/share/inspect', fs.readFileSync(big))).status, 400);
+  await app.stop();
+});
