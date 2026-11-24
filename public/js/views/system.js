@@ -5,9 +5,9 @@ import { bind, refresh, empty } from '../ui.js';
 import { setTheme } from '../app.js';
 import { fmtIso } from '../time.js';
 
-const TYPE = { projects: 'פרויקטים', resources: 'חומרים ופתקים', assignments: 'מטלות', exams: 'מבחנים', summary_chapters: 'פרקים בסיכומים', applications: 'יישומים לפרויקטים', topics: 'נושאים', lessons: 'שיעורים', tasks: 'משימות', flags: 'נקודות לא ברורות' };
+const TYPE = { projects: 'פרויקטים', resources: 'חומרים ופתקים', assignments: 'מטלות', exams: 'מבחנים', summary_chapters: 'סיכומים', summary_folders: 'תיקיות סיכומים', applications: 'יישומים לפרויקטים', topics: 'נושאים', lessons: 'שיעורים', tasks: 'משימות', flags: 'נקודות לא ברורות' };
 const FIELD = { title: 'כותרת', name: 'שם', tags: 'תגיות', notes: 'הערות', original_name: 'שם הקובץ', url: 'כתובת', body: 'תוכן הפתק', text_content: 'תוכן הקובץ', body_md: 'תוכן', instructions_md: 'הנחיות', next_action: 'פעולה הבאה', notes_md: 'הערות', draft_md: 'טיוטה', feedback_md: 'משוב', location: 'מיקום', description: 'תיאור', learned: 'מה למדתי', problem: 'בעיה', proposal: 'יישום', benefit: 'תועלת', questions: 'שאלות', acceptance: 'קריטריונים', text: 'טקסט', date: 'תאריך' };
-const href = r => ({ resources: `#/r/${r.id}`, assignments: `#/a/${r.id}`, exams: `#/exam/${r.id}`, summary_chapters: `#/summary/${r.course_id}?ch=${r.id}`, applications: `#/app/${r.id}`, projects: '#/apps', topics: `#/topic/${r.id}`, lessons: `#/lesson/${r.id}`, tasks: '#/tasks', flags: '#/' })[r.table];
+const href = r => ({ resources: `#/r/${r.id}`, assignments: `#/a/${r.id}`, exams: `#/exam/${r.id}`, summary_chapters: `#/summary/${r.course_id}?s=${r.id}`, topics: `#/topic/${r.id}`, lessons: `#/lesson/${r.id}`, tasks: '#/tasks', flags: '#/' })[r.table];
 
 export async function search(root, _, query) {
   const q = (query.get('q') || '').trim();
@@ -27,7 +27,7 @@ export async function search(root, _, query) {
       <strong>לא נכלל:</strong> תוכן של קובצי PDF, תמונות ופורמטים ישנים (DOC/PPT/XLS) — הם נמצאים רק לפי כותרת, תגיות והערות.${unsearchable ? ` כרגע ${unsearchable} קבצים כאלה.` : ''}</aside></div>`);
 }
 
-const TRASH = ['resources', 'assignments', 'exams', 'tasks', 'applications', 'projects', 'summary_chapters', 'topics', 'lessons', 'folders', 'courses', 'flags', 'semesters'];
+const TRASH = ['resources', 'assignments', 'exams', 'tasks', 'applications', 'projects', 'summary_chapters', 'summary_folders', 'topics', 'lessons', 'folders', 'courses', 'flags', 'semesters'];
 const TNAME = { ...TYPE, folders: 'תיקיות', courses: 'קורסים', semesters: 'סמסטרים' };
 export function trash(root) {
   const items = TRASH.flatMap(t => all(t).filter(r => r.deleted_at).map(r => ({ ...r, table: t }))).sort((a, b) => b.deleted_at.localeCompare(a.deleted_at));
@@ -94,7 +94,7 @@ export async function settings(root) {
     out.innerHTML = str(html`<p class="loading">בודק את הגיבוי…</p>`);
     try {
       const r = await api('POST', '/api/restore/inspect', f);
-      const LBL = { courses: 'קורסים', resources: 'חומרים', assignments: 'מטלות', exams: 'מבחנים', summary_chapters: 'פרקי סיכום', applications: 'יישומים' };
+      const LBL = { courses: 'קורסים', resources: 'חומרים', assignments: 'מטלות', exams: 'מבחנים', summary_chapters: 'סיכומים', applications: 'יישומים' };
       out.innerHTML = str(html`<div class="notice"><p><strong>הגיבוי תקין.</strong> ${r.created_at ? `נוצר ${fmtIso(r.created_at)}.` : 'צילום מסד נתונים בלבד (ללא קבצים).'}</p>
         <table class="table"><thead><tr><th></th><th>בגיבוי</th><th>כרגע</th></tr></thead><tbody>${Object.keys(LBL).map(k => html`<tr><td>${LBL[k]}</td><td>${r.backup[k]}</td><td>${r.current[k]}</td></tr>`)}</tbody></table>
         ${r.missingFiles.length ? html`<p class="flag flag-danger">${r.missingFiles.length} קבצים שמוזכרים בגיבוי אינם בו ואינם במחשב: ${r.missingFiles.slice(0, 10).join(', ')}${r.missingFiles.length > 10 ? '…' : ''}. הרשומות ישוחזרו, והקבצים יסומנו כחסרים.</p>` : ''}

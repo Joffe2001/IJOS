@@ -6,7 +6,6 @@ import * as course from './views/course.js';
 import * as ws from './views/workspace.js';
 import * as work from './views/work.js';
 import * as summary from './views/summary.js';
-import * as apps from './views/apps.js';
 import * as sys from './views/system.js';
 import * as onboard from './views/onboard.js';
 
@@ -24,11 +23,8 @@ const routes = [
   [/^\/calendar$/, work.calendar],
   [/^\/tasks$/, work.tasks],
   [/^\/summary\/(\d+)$/, summary.summary],
-  [/^\/summary\/(\d+)\/propose$/, summary.propose],
   [/^\/summary\/(\d+)\/versions$/, summary.versions],
-  [/^\/ai$/, summary.promptBuilder],
-  [/^\/apps$/, apps.list],
-  [/^\/app\/(\d+)$/, apps.edit],
+  [/^\/summaries$/, summary.overview],
   [/^\/search$/, sys.search],
   [/^\/trash$/, sys.trash],
   [/^\/settings$/, sys.settings],
@@ -85,8 +81,7 @@ function renderSidebar() {
       <a href="#/inbox" ${active(/^\/inbox/)}><span class="nav-ico" aria-hidden="true">⇣</span>לא ממוין ${inbox ? html`<span class="count">${inbox}</span>` : ''}</a>
       <a href="#/calendar" ${active(/^\/calendar/)}><span class="nav-ico" aria-hidden="true">▦</span>לוח שנה ומועדים</a>
       <a href="#/tasks" ${active(/^\/tasks/)}><span class="nav-ico" aria-hidden="true">✓</span>משימות ומטלות</a>
-      <a href="#/apps" ${active(/^\/apps?/)}><span class="nav-ico" aria-hidden="true">✦</span>יישומים לפרויקטים</a>
-      <a href="#/ai" ${active(/^\/ai/)}><span class="nav-ico" aria-hidden="true">⌘</span>עבודה עם AI</a>
+      <a href="#/summaries" ${active(/^\/summar/)}><span class="nav-ico" aria-hidden="true">✎</span>סיכומים</a>
     </nav>
     ${visible.map(s => html`<section class="nav-sem">
       <h2 class="nav-head"><a href="#/semester/${s.id}" ${active(new RegExp(`^/semester/${s.id}$`))}>${byId('years', s.year_id)?.name} · ${s.name}</a>${s.status !== 'active' ? html` <span class="muted small">(${s.status === 'planned' ? 'עתידי' : 'הסתיים'})</span>` : ''}</h2>

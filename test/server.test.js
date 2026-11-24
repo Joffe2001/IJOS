@@ -35,7 +35,7 @@ test('clean first launch: no personal data, no courses, onboarding pending', asy
   const s = (await app.call('GET', '/api/state')).body;
   for (const t of ['years', 'semesters', 'courses', 'resources', 'assignments', 'exams', 'projects', 'applications']) assert.equal(s[t].length, 0, `${t} empty`);
   assert.equal(s.settings.onboarded, undefined);
-  assert.equal(s.meta.schema, 2);
+  assert.equal(s.meta.schema, 3);
   assert.equal((await app.call('GET', '/api/health')).body.app, 'ijos');
   await app.stop();
 });
@@ -151,7 +151,7 @@ function makeV1(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'study.db');
   const db = openDb(file);
-  db.exec(`DROP TABLE projects; DROP TABLE application_projects;
+  db.exec(`DROP TABLE projects; DROP TABLE application_projects; DROP TABLE summary_folders; ALTER TABLE summary_chapters DROP COLUMN folder_id;
     ALTER TABLE years DROP COLUMN sample; ALTER TABLE semesters DROP COLUMN sample; ALTER TABLE courses DROP COLUMN sample; ALTER TABLE courses DROP COLUMN color; ALTER TABLE courses DROP COLUMN icon;
     DELETE FROM settings; PRAGMA user_version=1;`);
   const t = new Date().toISOString();
@@ -161,16 +161,17 @@ function makeV1(dir) {
   const app = db.prepare('INSERT INTO applications (title, target, target_other, created_at, updated_at) VALUES (?,?,?,?,?)');
   app.run('a', 'both', '', t, t); app.run('b', 'tori', '', t, t); app.run('c', 'other', 'Side gig', t, t);
   db.prepare('INSERT INTO resources (title, kind, body, created_at, updated_at) VALUES (?,?,?,?,?)').run('פתק ישן', 'note', 'תוכן שחייב לשרוד', t, t);
+  db.prepare('INSERT INTO summary_chapters (course_id, title, body_md, created_at, updated_at) VALUES (1,?,?,?,?)').run('סיכום ישן', 'פרק שחייב לשרוד', t, t);
   db.close();
   return file;
 }
 
-test('existing-user upgrade: schema 1 to 2 keeps every record and turns fixed targets into projects', async () => {
+test('existing-user upgrade: schema 1 to 3 keeps every record, turns fixed targets into projects, old summary chapters become summaries', async () => {
   const dir = tmp();
   makeV1(dir);
   const app = await start(dir);
   const s = (await app.call('GET', '/api/state')).body;
-  assert.equal(s.meta.schema, 2);
+  assert.equal(s.meta.schema, 3);
   assert.equal(s.courses.length, 6, 'courses preserved');
   assert.equal(s.resources[0].title, 'פתק ישן');
   assert.equal((await app.call('GET', `/api/rows/resources/${s.resources[0].id}`)).body.body, 'תוכן שחייב לשרוד');
@@ -181,6 +182,8 @@ test('existing-user upgrade: schema 1 to 2 keeps every record and turns fixed ta
   assert.deepEqual(names(byTitle('b')), ['Tori']);
   assert.deepEqual(names(byTitle('c')), ['Side gig']);
   assert.equal(s.settings.onboarded, '1', 'existing users skip onboarding');
+  assert.ok(s.summary_chapters.some(x => x.title === 'סיכום ישן' && x.folder_id === null), 'old chapter is a top-level summary');
+  assert.deepEqual(s.summary_folders, []);
   await app.stop();
   const again = await start(dir); // migration runs once
   assert.equal((await again.call('GET', '/api/state')).body.projects.length, 3);
@@ -398,4 +401,57 @@ test('course sharing: export one course, classmate imports it as a new course wi
   assert.equal(t.applications.length, 0);
   assert.equal((await b.call('POST', '/api/share/apply', { token: ins.body.token, semester_id: sem.id })).status, 400, 'token single use');
   await a.stop(); await b.stop();
+});
+
+test('file references stay inside the data folder; risky files are never opened by the OS; zip bombs refused', async () => {
+  const dir = tmp();
+  const app = await start(dir);
+  const up = (await app.call('POST', '/api/upload?name=run.cmd', Buffer.from('echo hi'))).body.resource;
+  assert.equal((await app.call('POST', `/api/open/${up.id}`)).status, 400, 'script not handed to the shell');
+  await app.call('PATCH', `/api/rows/resources/${up.id}`, { blob_sha: '../../../evil', title: 'x' });
+  const after = (await app.call('GET', `/api/rows/resources/${up.id}`)).body;
+  assert.equal(after.blob_sha, up.blob_sha, 'row API cannot repoint files'); assert.equal(after.title, 'x');
+  // backup whose DB points outside the blob store
+  const b = (await app.call('POST', '/api/backup')).body;
+  const src = path.join(dir, 'backups', b.name), z = readZip(src);
+  const db = path.join(tmp(), 's.db'); fs.writeFileSync(db, z.read('study.db')); z.close();
+  const d = new DatabaseSync(db); d.exec("UPDATE resources SET blob_sha='../../outside'"); d.close();
+  const evil = path.join(tmp(), 'e.zip'); writeZip(evil, [{ name: 'manifest.json', data: Buffer.from('{"app":"ijos","schema":2}') }, { name: 'study.db', file: db }]);
+  const r = await app.call('POST', '/api/restore/inspect', fs.readFileSync(evil));
+  assert.equal(r.status, 400); assert.match(r.body.error, /הפניה לא תקינה/);
+  // 50 MB of zeros declared as 10 bytes
+  const bomb = path.join(tmp(), 'bomb.zip'); writeZip(bomb, [{ name: 'manifest.json', data: Buffer.alloc(50 * 1048576) }]);
+  const buf = fs.readFileSync(bomb); const cd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02])); buf.writeUInt32LE(10, cd + 24);
+  const bz = path.join(tmp(), 'b2.zip'); fs.writeFileSync(bz, buf);
+  const zz = readZip(bz); assert.throws(() => zz.read('manifest.json')); zz.close();
+  await app.stop();
+});
+
+test('summaries in folders: create, nest, move, export with folder path, version restore keeps the folder, share carries folders', async () => {
+  const app = await start(tmp());
+  await app.call('POST', '/api/rows/years', { name: 'א' });
+  await app.call('POST', '/api/rows/semesters', { year_id: 1, name: 'א', status: 'active' });
+  const c = (await app.call('POST', '/api/rows/courses', { semester_id: 1, name: 'קורס' })).body;
+  const top = (await app.call('POST', '/api/rows/summary_folders', { course_id: c.id, name: 'מבחן' })).body;
+  const sub = (await app.call('POST', '/api/rows/summary_folders', { course_id: c.id, parent_id: top.id, name: 'פרק 1' })).body;
+  const x = (await app.call('POST', '/api/rows/summary_chapters', { course_id: c.id, folder_id: sub.id, title: 'לולאות', body_md: 'for' })).body;
+  const md = (await app.call('GET', `/api/download/summary/${c.id}`)).body.toString('utf8');
+  assert.match(md, /## מבחן \/ פרק 1 \/ לולאות/);
+  const v = (await app.call('POST', `/api/summary/${c.id}/snapshot`, { reason: 'test' })).body;
+  await app.call('PATCH', `/api/rows/summary_chapters/${x.id}`, { folder_id: null, body_md: 'changed' });
+  await app.call('POST', `/api/summary-versions/${v.id}/restore`);
+  const back = (await app.call('GET', `/api/rows/summary_chapters/${x.id}`)).body;
+  assert.equal(back.folder_id, sub.id); assert.equal(back.body_md, 'for');
+  const share = await app.call('GET', `/api/download/share/${c.id}?summary=1`);
+  const b = await start(tmp());
+  await b.call('POST', '/api/rows/years', { name: 'א' });
+  await b.call('POST', '/api/rows/semesters', { year_id: 1, name: 'א' });
+  const tok = (await b.call('POST', '/api/share/inspect', share.body)).body.token;
+  const nc = (await b.call('POST', '/api/share/apply', { token: tok, semester_id: 1 })).body.course;
+  const st = (await b.call('GET', '/api/state')).body;
+  const f2 = st.summary_folders.filter(f => f.course_id === nc.id), s2 = st.summary_chapters.find(y => y.course_id === nc.id);
+  assert.equal(f2.length, 2);
+  const parent = f2.find(f => f.id === s2.folder_id);
+  assert.equal(parent.name, 'פרק 1'); assert.equal(f2.find(f => f.id === parent.parent_id).name, 'מבחן');
+  await app.stop(); await b.stop();
 });

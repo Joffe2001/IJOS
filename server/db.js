@@ -1,7 +1,7 @@
 // SQLite storage (built into Node 22.13+/24 as node:sqlite). One file: <data folder>/study.db
 import { DatabaseSync } from 'node:sqlite';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -56,6 +56,7 @@ export function openDb(file) {
   if (v > SCHEMA_VERSION) { db.close(); throw new Error(`Database schema ${v} is newer than this app (${SCHEMA_VERSION})`); }
   db.exec(SCHEMA);
   if (v < 2) migrateTo2(db, v === 0);
+  if (v < 3) migrateTo3(db);
   return db;
 }
 
@@ -84,6 +85,17 @@ function migrateTo2(db, fresh) {
       db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarded', '1')").run();
     }
     db.exec('PRAGMA user_version=2');
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+
+// v3: summaries live in folders (any depth) instead of one master summary per course. Existing chapters become summaries at the top level.
+function migrateTo3(db) {
+  db.exec('BEGIN');
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS summary_folders (id INTEGER PRIMARY KEY, course_id INTEGER NOT NULL, parent_id INTEGER, name TEXT NOT NULL, sort INTEGER DEFAULT 0, deleted_at TEXT, created_at TEXT, updated_at TEXT)');
+    addCol(db, 'summary_chapters', 'folder_id INTEGER');
+    db.exec('PRAGMA user_version=3');
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }

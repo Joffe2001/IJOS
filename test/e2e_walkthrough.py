@@ -280,64 +280,55 @@ def t_search(page):
     expect(page.locator('main')).to_contain_text('תוכן הפתק')
     shot(page, '10-search')
 
-@step('master summary: edit, version, restore')
+@step('C summaries: folder, summary, drag into folder, delete, version restore')
 def t_summary(page):
     go(page, '/summary/3')
-    page.locator('[data-act=new-ch]').first.click()
+    expect(page.locator('main')).to_contain_text('הסיכום הראשון שלכם לקורס')
+    page.locator('main [data-act=new-folder]').first.click()
+    page.fill('dialog[open] input[name=name]', 'לקראת המבחן'); submit_dialog(page); page.wait_for_timeout(700)
+    page.locator('.page-head [data-act=new]').click()
     page.fill('dialog[open] input[name=title]', 'לולאות')
+    page.select_option('dialog[open] select[name=folder_id]', label='  '[:0] + '📁 לקראת המבחן')
     page.select_option('dialog[open] select[name=topic_id]', label='לולאות')
-    submit_dialog(page); page.wait_for_timeout(800)
+    submit_dialog(page); page.wait_for_timeout(900)
+    assert 'edit=1' in page.url, page.url
     ed = page.locator('#ch-editor')
-    ed.fill('### הגדרות\n- **לולאה** — חזרה על קוד מספר פעמים\n')
-    page.wait_for_timeout(1500)
-    page.locator('[data-act=snap]').click(); page.wait_for_timeout(500)
-    ed.fill('### הגדרות\n- **לולאה** — טקסט חדש שנכתב אחרי הגרסה\n'); page.wait_for_timeout(1500)
+    ed.fill('### הגדרות\n- **לולאה** — חזרה על קוד מספר פעמים\n'); page.wait_for_timeout(1500)
+    page.locator('[data-act=done]').click(); page.wait_for_timeout(600)
+    expect(page.locator('.summary-doc')).to_contain_text('חזרה על קוד מספר פעמים')
+    # a second summary at the top level, dragged into the folder
+    page.locator('.page-head [data-act=new]').click()
+    page.fill('dialog[open] input[name=title]', 'משתנים')
+    page.select_option('dialog[open] select[name=folder_id]', value='')
+    submit_dialog(page); page.wait_for_timeout(900)
     page.locator('[data-act=done]').click(); page.wait_for_timeout(500)
-    expect(page.locator('.summary-doc')).to_contain_text('טקסט חדש')
+    page.locator('.sf-root > .sf-item a', has_text='משתנים').drag_to(page.locator('.sf-folder summary').first); page.wait_for_timeout(900)
+    st = api(page, '/api/state')
+    folder = next(f for f in st['summary_folders'] if f['name'] == 'לקראת המבחן')
+    assert all(x['folder_id'] == folder['id'] for x in st['summary_chapters'] if x['course_id'] == 3), 'drag and drop moved the summary'
+    page.locator('.sf-item a', has_text='לולאות').click(); page.wait_for_timeout(500)
     shot(page, '11-summary')
+    go(page, '/summaries'); expect(page.locator('main')).to_contain_text('לולאות'); shot(page, '11b-summaries-overview')
+    # delete, then bring it back from the version history
+    go(page, '/summary/3'); page.locator('.sf-item a', has_text='לולאות').click(); page.wait_for_timeout(400)
+    page.locator('.sf-doc [data-act=del]').click(); submit_dialog(page); page.wait_for_timeout(800)
+    expect(page.locator('.sf-tree')).not_to_contain_text('לולאות')
     go(page, '/summary/3/versions')
     page.locator('main .plain a').first.click(); page.wait_for_timeout(600)
-    expect(page.locator('main')).to_contain_text('חזרה על קוד מספר פעמים')
     page.locator('[data-act=restore]').click(); page.wait_for_timeout(900)
-    expect(page.locator('.summary-doc')).to_contain_text('חזרה על קוד מספר פעמים')
-
-@step('AI proposal review: overlap/contradiction flags, preview, accept')
-def t_propose(page):
-    go(page, '/summary/3/propose')
-    page.locator('form[data-submit=build] li label').first.locator('input').check()
-    page.locator('form[data-submit=build] button.btn').click(); page.wait_for_timeout(800)
-    expect(page.locator('#prompt-out textarea')).to_be_visible()
-    page.select_option('select[name=origin]', 'chatgpt')
-    page.fill('form[data-submit=analyze] textarea', '## לולאות\n\n- **לולאה** — מבנה שמבצע פעולה כל עוד תנאי מתקיים\n\n## פונקציות\n\nפונקציה היא בלוק קוד עם שם.\n')
-    page.locator('form[data-submit=analyze] button').click(); page.wait_for_timeout(900)
-    expect(page.locator('main')).to_contain_text('סתירה אפשרית')
-    shot(page, '12-proposal-review')
-    page.locator('.sticky-actions button.btn-primary').click(); page.wait_for_timeout(1200)
-    expect(page.locator('.summary-doc')).to_contain_text('פונקציה היא בלוק קוד')
-    expect(page.locator('.summary-doc')).to_contain_text('מקור: ChatGPT')
+    expect(page.locator('.sf-tree')).to_contain_text('לולאות')
     st = api(page, '/api/state')
-    assert len([v for v in st['summary_versions'] if v['course_id'] == 3]) >= 3
+    x = next(x for x in st['summary_chapters'] if x['title'] == 'לולאות')
+    assert x['folder_id'] == folder['id'], 'restored into its folder'
 
-@step('D topic → own project idea → exported brief')
-def t_apps(page):
-    go(page, '/apps')
-    expect(page.locator('main')).to_contain_text('איזה פרויקט אתם בונים')
-    page.locator('[data-act=new-project]').first.click()
-    page.fill('dialog[open] input[name=name]', 'אפליקציית הזמנות')
-    submit_dialog(page); page.wait_for_timeout(600)
-    topic = api(page, '/api/state')['topics'][0]
+@step('D topic page shows its summaries')
+def t_topic_summary(page):
+    topic = next(t for t in api(page, '/api/state')['topics'] if t['name'] == 'לולאות')
     go(page, f"/topic/{topic['id']}")
+    expect(page.locator('main')).to_contain_text('סיכומים')
+    page.locator('main a[href*="/summary/3?s="]').first.click(); page.wait_for_timeout(600)
+    assert '/summary/3?s=' in page.url, page.url
     shot(page, '13a-topic')
-    go(page, f"/apps?new=1&course=3&topic={topic['id']}"); page.wait_for_timeout(800)
-    assert re.search(r'#/app/\d+', page.url), page.url
-    page.locator('input[data-change=toggle-project]').first.check(); page.wait_for_timeout(500)
-    page.fill('input[name=title]', 'זמינות תורים עם לולאה'); page.press('input[name=title]', 'Tab'); page.wait_for_timeout(500)
-    page.fill('textarea[name=acceptance]', 'כל הזמנה שייכת ללקוח אחד ולעסק אחד'); page.press('textarea[name=acceptance]', 'Tab'); page.wait_for_timeout(500)
-    aid = re.search(r'#/app/(\d+)', page.url).group(1)
-    brief = page.evaluate(f"fetch('/api/download/brief/{aid}').then(r => r.text())")
-    assert 'Implementation brief' in brief and 'כל הזמנה שייכת' in brief and 'אפליקציית הזמנות' in brief and 'לולאות' in brief, brief[:400]
-    shot(page, '13-application')
-    go(page, '/apps'); shot(page, '13b-apps-list')
 
 @step('trash: delete and restore a resource')
 def t_trash(page):
@@ -462,7 +453,7 @@ with sync_playwright() as p:
     page = b.new_page(viewport={'width': 1440, 'height': 900}, locale='he-IL', timezone_id='Asia/Jerusalem')
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.on('console', lambda m: m.type == 'error' and errors.append(m.text))
-    for t in [t_onboard, t_import, t_dash, t_topics, t_html, t_multi_topic, t_note, t_resume, t_unclear, t_office, t_assignment, t_reminder, t_search, t_summary, t_propose, t_apps, t_trash, t_states, t_narrow, t_backup_restore, t_restart, t_theme, t_a11y, t_long, t_screens]:
+    for t in [t_onboard, t_import, t_dash, t_topics, t_html, t_multi_topic, t_note, t_resume, t_unclear, t_office, t_assignment, t_reminder, t_search, t_summary, t_topic_summary, t_trash, t_states, t_narrow, t_backup_restore, t_restart, t_theme, t_a11y, t_long, t_screens]:
         t(page)
     b.close()
 for port in list(procs): stop_server(port)

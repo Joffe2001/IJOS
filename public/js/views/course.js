@@ -1,5 +1,4 @@
-import { html, raw, str, dialog, toast, api, errorToast, options, parseTags, KIND_ICON, SOURCE, APP_STATUS } from '../util.js';
-import { projectsOf } from './apps.js';
+import { html, raw, str, dialog, toast, api, errorToast, options, parseTags, KIND_ICON, SOURCE } from '../util.js';
 import { PALETTE } from './onboard.js';
 import { md } from '../md.js';
 import { S, T, byId, courseName, topicsOf, create, patch, unlink, nextAction, autosave } from '../store.js';
@@ -65,7 +64,7 @@ async function shareCourse(c) {
     <p class="hint">תמיד נכלל: פרטי הקורס, נושאים, שיעורים, תיקיות, קבצים וקישורים.<br>אף פעם לא נכלל: סטטוס מטלות, טיוטות, ציונים, משוב, תזכורות, נקודות לא ברורות ורעיונות לפרויקטים.</p>
     <label class="check"><input type="checkbox" name="notes"> הפתקים שלי (כולל פתקי שיעורים)</label>
     <label class="check"><input type="checkbox" name="mine" checked> קבצים שיצרתי בעצמי</label>
-    <label class="check"><input type="checkbox" name="summary" checked> הסיכום המרכזי</label>
+    <label class="check"><input type="checkbox" name="summary" checked> הסיכומים (כולל התיקיות)</label>
     <label class="check"><input type="checkbox" name="deadlines" checked> מטלות ומבחנים (שם, הנחיות ותאריכים בלבד)</label>
     <p class="hint">שימו לב לזכויות יוצרים: שתפו רק חומרים שמותר לכם להעביר הלאה.</p>`, { submit: 'יצירת קובץ והורדה' });
   if (!v) return;
@@ -97,12 +96,12 @@ export function importShared(s) {
 }
 
 // ---------------- course ----------------
-const TABS = [['overview', 'מידע על הקורס'], ['topics', 'נושאים'], ['lessons', 'שיעורים'], ['materials', 'חומרים ותיקיות'], ['assignments', 'מטלות'], ['exams', 'מבחנים'], ['summary', 'סיכום מרכזי'], ['apps', 'יישומים לפרויקטים']];
+const TABS = [['overview', 'מידע על הקורס'], ['topics', 'נושאים'], ['lessons', 'שיעורים'], ['materials', 'חומרים ותיקיות'], ['assignments', 'מטלות'], ['exams', 'מבחנים'], ['summary', 'סיכומים']];
 export function course(root, [id, tab = 'overview'], query) {
   const c = byId('courses', id);
   if (!c || c.deleted_at) throw new Error('הקורס לא נמצא');
   if (tab === 'summary') { location.replace(`#/summary/${c.id}`); return; }
-  const body = { overview, topics: topicsTab, lessons: lessonsTab, materials, assignments: asgTab, exams: examsTab, apps: appsTab }[tab] || overview;
+  const body = { overview, topics: topicsTab, lessons: lessonsTab, materials, assignments: asgTab, exams: examsTab }[tab] || overview;
   const part = body(c, query);
   root.innerHTML = str(html`<div class="page">
     ${courseCrumbs(c.id)}
@@ -184,7 +183,7 @@ function topicsTab(c, query) {
     html: html`<section class="card">
       <form class="inline-form" data-submit="add-topic"><label class="sr-only" for="new-topic">נושא חדש</label><input id="new-topic" name="name" dir="auto" placeholder="נושא חדש, למשל: לולאות" required><button class="btn btn-sm">הוספת נושא</button></form>
       ${list.length ? html`<ul class="items">${list.map((t, i) => html`<li class="item ${t.archived ? 'archived' : ''}"><div class="item-main"><a href="#/topic/${t.id}" dir="auto">${t.name}</a>
-        <div class="item-meta">${count(t.id)} חומרים${chapters.some(ch => ch.topic_id === t.id) ? ' · יש פרק בסיכום' : html` · <span class="muted">אין פרק בסיכום</span>`}${t.archived ? ' · בארכיון' : ''}</div></div>
+        <div class="item-meta">${count(t.id)} חומרים${chapters.some(ch => ch.topic_id === t.id) ? ' · יש סיכום' : ''}${t.archived ? ' · בארכיון' : ''}</div></div>
         <span class="row-tools"><button class="icon-btn" data-act="t-move" data-id="${t.id}" data-dir="-1" aria-label="למעלה" ${i === 0 ? raw('disabled') : ''}>↑</button><button class="icon-btn" data-act="t-move" data-id="${t.id}" data-dir="1" aria-label="למטה" ${i === list.length - 1 ? raw('disabled') : ''}>↓</button>
         <button class="btn-link small" data-act="t-rename" data-id="${t.id}">שינוי שם</button><button class="btn-link small" data-act="t-arch" data-id="${t.id}">${t.archived ? 'החזרה' : 'ארכיון'}</button></span></li>`)}</ul>`
         : empty('עדיין אין נושאים. נושא מאגד חומרים משיעורים שונים — למשל "לולאות" או "מודל פורטר".')}
@@ -304,15 +303,6 @@ export async function newExam(courseId) {
   location.hash = `#/exam/${e.id}`;
 }
 
-function appsTab(c) {
-  const list = T('applications').filter(a => a.course_id === c.id);
-  return {
-    html: html`<section class="card"><div class="toolbar"><a class="btn btn-sm btn-primary" href="#/apps?new=1&course=${c.id}">+ רעיון יישום</a></div>
-      ${list.length ? html`<ul class="items">${list.map(a => html`<li class="item"><div class="item-main"><a href="#/app/${a.id}" dir="auto">${a.title}</a> <span class="pill">${APP_STATUS[a.status]}</span><div class="item-meta">${projectsOf(a.id).map(p => p.name).join(' · ') || 'בלי פרויקט'}</div></div></li>`)}</ul>` : empty('אין עדיין רעיונות יישום מהקורס הזה. איך מה שלמדתם כאן יכול לעזור לפרויקט שלכם?')}</section>`,
-    handlers: {},
-  };
-}
-
 // ---------------- topic ----------------
 export function topic(root, [id]) {
   const t = byId('topics', id);
@@ -323,7 +313,6 @@ export function topic(root, [id]) {
   const asg = S.data.assignment_topics.filter(x => x.topic_id === t.id).map(x => byId('assignments', x.assignment_id)).filter(a => a && !a.deleted_at);
   const exams = S.data.exam_topics.filter(x => x.topic_id === t.id).map(x => byId('exams', x.exam_id)).filter(e => e && !e.deleted_at);
   const chapters = T('summary_chapters').filter(ch => ch.topic_id === t.id);
-  const apps = T('applications').filter(a => a.topic_id === t.id);
   const flags = T('flags').filter(f => f.status === 'open' && rids.includes(f.resource_id));
   root.innerHTML = str(html`<div class="page">${courseCrumbs(t.course_id, [['נושאים', `#/course/${t.course_id}/topics`], [t.name]])}
     <header class="page-head"><div><h1 dir="auto">${t.name}</h1><p class="muted">כל מה שיש לי על הנושא, מכל השיעורים</p></div>
@@ -332,10 +321,9 @@ export function topic(root, [id]) {
     <div class="grid-2">
       <section class="card"><h2 class="card-title">חומרים (${res.length})</h2>${res.length ? groups.filter(g => g[1].length).map(([l, rs]) => html`<h3 class="sub">${l}</h3><ul class="res-list">${rs.map(r => resourceRow(r, { extra: html`<button class="btn-link small" data-act="unlink" data-id="${r.id}">ניתוק</button>` }))}</ul>`) : empty('אין חומרים משויכים. חומר אחד יכול להשתייך לכמה נושאים בלי לשכפל את הקובץ.')}</section>
       <div>
-        <section class="card"><h2 class="card-title">בסיכום המרכזי</h2>${chapters.length ? html`<ul class="plain">${chapters.map(ch => html`<li><a href="#/summary/${t.course_id}?ch=${ch.id}">${ch.title}</a></li>`)}</ul>` : html`<p class="muted small">אין פרק לנושא הזה. <a href="#/summary/${t.course_id}?newTopic=${t.id}">יצירת פרק</a></p>`}</section>
+        <section class="card"><h2 class="card-title">סיכומים</h2>${chapters.length ? html`<ul class="plain">${chapters.map(ch => html`<li><a href="#/summary/${t.course_id}?s=${ch.id}" dir="auto">${ch.title}</a></li>`)}</ul>` : html`<p class="muted small">עוד אין סיכום שמשויך לנושא הזה.</p>`}<a class="btn btn-sm" href="#/summary/${t.course_id}">לסיכומים של הקורס</a></section>
         ${flags.length ? html`<section class="card"><h2 class="card-title">לא ברור (${flags.length})</h2><ul class="plain">${flags.map(f => html`<li><a href="#/r/${f.resource_id}?panel=unclear" dir="auto">${f.text}</a></li>`)}</ul></section>` : ''}
         <section class="card"><h2 class="card-title">מטלות ומבחנים</h2>${asg.length || exams.length ? html`<ul class="plain">${asg.map(a => html`<li><a href="#/a/${a.id}" dir="auto">${a.title}</a> ${statusPill(a.status)}</li>`)}${exams.map(e => html`<li><a href="#/exam/${e.id}" dir="auto">${e.title}</a>${e.date ? ` · ${fmtDateTime(e.date)}` : ''}</li>`)}</ul>` : html`<p class="muted small">אין מטלות או מבחנים שמקושרים לנושא.</p>`}</section>
-        <section class="card"><h2 class="card-title">יישומים לפרויקטים</h2>${apps.length ? html`<ul class="plain">${apps.map(a => html`<li><a href="#/app/${a.id}" dir="auto">${a.title}</a></li>`)}</ul>` : ''}<a class="btn btn-sm" href="#/apps?new=1&course=${t.course_id}&topic=${t.id}">+ רעיון יישום</a></section>
       </div></div></div>`);
   bind(root, {
     ...fieldHandlers,

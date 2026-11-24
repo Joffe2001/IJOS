@@ -32,7 +32,8 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
   let db = openDb(dbFile);
   let cols = tableColumns(db);
 
-  const blobPath = sha => path.join(dirs.blobs, sha.slice(0, 2), sha);
+  const SHA = /^[0-9a-f]{64}$/;
+  const blobPath = sha => { if (!SHA.test(sha)) throw httpErr(400, 'invalid file reference'); return path.join(dirs.blobs, sha.slice(0, 2), sha); }; // sha comes from the DB, which a restore can replace
   const q = (sql, ...a) => db.prepare(sql).all(...a);
   const one = (sql, ...a) => db.prepare(sql).get(...a);
   const run = (sql, ...a) => db.prepare(sql).run(...a);
@@ -91,8 +92,8 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       run('UPDATE summary_chapters SET deleted_at=? WHERE course_id=? AND deleted_at IS NULL', t, v.course_id);
       for (const c of snap.chapters) {
         const exists = getRow('summary_chapters', c.id);
-        if (exists) run('UPDATE summary_chapters SET title=?, body_md=?, topic_id=?, sort=?, deleted_at=NULL, updated_at=? WHERE id=?', c.title, c.body_md, c.topic_id, c.sort, t, c.id);
-        else run('INSERT INTO summary_chapters (id, course_id, topic_id, title, body_md, sort, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)', c.id, v.course_id, c.topic_id, c.title, c.body_md, c.sort, c.created_at, t);
+        if (exists) run('UPDATE summary_chapters SET title=?, body_md=?, topic_id=?, folder_id=?, sort=?, deleted_at=NULL, updated_at=? WHERE id=?', c.title, c.body_md, c.topic_id, c.folder_id ?? null, c.sort, t, c.id);
+        else run('INSERT INTO summary_chapters (id, course_id, topic_id, folder_id, title, body_md, sort, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)', c.id, v.course_id, c.topic_id, c.folder_id ?? null, c.title, c.body_md, c.sort, c.created_at, t);
         run('DELETE FROM summary_sources WHERE chapter_id=?', c.id);
       }
       for (const s of snap.sources) run('INSERT OR IGNORE INTO summary_sources (chapter_id, resource_id) VALUES (?,?)', s.chapter_id, s.resource_id);
@@ -203,11 +204,15 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     fs.createReadStream(file).pipe(res);
   }
 
+  const fileSafe = b => { const { blob_sha, original_name, mime, ...rest } = b || {}; return rest; }; // file fields change only through upload/version routes
+  const OPENABLE = new Set(['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'txt', 'md', 'rtf', 'odt', 'ods', 'odp', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'mp3', 'mp4', 'm4a', 'wav', 'webm', 'zip', 'java', 'c', 'cpp', 'sql', 'json', 'ipynb']);
   function openExternal(id) {
     const { file, name } = fileFor(id);
     const dir = path.join(dirs.open, `${id}-${Date.now()}`);
+    if (!OPENABLE.has(extOf(safeName(name)))) throw httpErr(400, 'מטעמי אבטחה IJOS לא פותחת סוג קובץ זה בתוכנה. אפשר להוריד אותו ולפתוח ידנית.');
     fs.mkdirSync(dir, { recursive: true });
-    const copy = path.join(dir, name);
+    const safe = safeName(name);
+    const copy = path.join(dir, safe);
     fs.copyFileSync(file, copy);
     const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
     spawn(cmd, [copy], { detached: true, stdio: 'ignore' }).unref();
@@ -249,14 +254,15 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     const c = getRow('courses', courseId);
     const ch = q('SELECT * FROM summary_chapters WHERE course_id=? AND deleted_at IS NULL ORDER BY sort, id', courseId);
     const src = id => q('SELECT r.title FROM summary_sources s JOIN resources r ON r.id=s.resource_id WHERE s.chapter_id=?', id).map(r => r.title);
-    return `# סיכום מרכזי — ${c.name}\n\n` + ch.map(x => `## ${x.title}\n\n${x.body_md || ''}\n${src(x.id).length ? `\n_מקורות: ${src(x.id).join(', ')}_\n` : ''}`).join('\n');
+    const fpath = id => { const out = []; for (let f = id && getRow('summary_folders', id); f && !f.deleted_at && out.length < 20; f = f.parent_id && getRow('summary_folders', f.parent_id)) out.unshift(f.name); return out.length ? out.join(' / ') + ' / ' : ''; };
+    return `# סיכומים — ${c.name}\n\n` + ch.map(x => `## ${fpath(x.folder_id)}${x.title}\n\n${x.body_md || ''}\n${src(x.id).length ? `\n_מקורות: ${src(x.id).join(', ')}_\n` : ''}`).join('\n');
   }
   function exportAllMd() {
     const file = path.join(dirs.tmp, `ijos-notes-${stamp()}.zip`);
     const entries = [];
     const courseName = id => mdName(getRow('courses', id)?.name || 'לא ממוין');
     for (const n of q("SELECT * FROM resources WHERE kind='note' AND deleted_at IS NULL")) entries.push({ name: `${courseName(n.course_id)}/notes/${n.id}-${mdName(n.title)}.md`, data: Buffer.from(`# ${n.title}\n\n${n.body || ''}`) });
-    for (const c of q('SELECT * FROM courses WHERE deleted_at IS NULL')) if (one('SELECT 1 FROM summary_chapters WHERE course_id=? AND deleted_at IS NULL', c.id)) entries.push({ name: `${mdName(c.name)}/master-summary.md`, data: Buffer.from(summaryMd(c.id)) });
+    for (const c of q('SELECT * FROM courses WHERE deleted_at IS NULL')) if (one('SELECT 1 FROM summary_chapters WHERE course_id=? AND deleted_at IS NULL', c.id)) entries.push({ name: `${mdName(c.name)}/summaries.md`, data: Buffer.from(summaryMd(c.id)) });
     for (const a of q('SELECT * FROM applications WHERE deleted_at IS NULL')) entries.push({ name: `applications/${a.id}-${mdName(a.title)}.md`, data: Buffer.from(briefMd(a)) });
     writeZip(file, entries);
     return file;
@@ -317,6 +323,8 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         if (tdb.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok') throw httpErr(400, 'מסד הנתונים בגיבוי פגום');
         const ver = tdb.prepare('PRAGMA user_version').get().user_version;
         if (ver > SCHEMA_VERSION) throw httpErr(400, 'הגיבוי נוצר בגרסה חדשה יותר של האפליקציה');
+        const refs = tdb.prepare("SELECT blob_sha s FROM resources WHERE blob_sha IS NOT NULL UNION SELECT blob_sha FROM resource_versions WHERE blob_sha IS NOT NULL UNION SELECT sha FROM blobs").all();
+        if (refs.some(r => !SHA.test(String(r.s)))) throw httpErr(400, 'הגיבוי פגום: הפניה לא תקינה לקובץ');
         const tables = new Set(tdb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name));
         for (const t of ['years', 'courses', 'resources']) if (!tables.has(t)) throw httpErr(400, 'מבנה הנתונים בגיבוי אינו תקין');
         const count = t => tables.has(t) ? tdb.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
@@ -397,9 +405,9 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
   }
   function gcBlobs() {
     const used = new Set(q('SELECT blob_sha s FROM resources WHERE blob_sha IS NOT NULL UNION SELECT blob_sha FROM resource_versions WHERE blob_sha IS NOT NULL').map(r => r.s));
-    for (const b of q('SELECT sha FROM blobs')) if (!used.has(b.sha)) { fs.rmSync(blobPath(b.sha), { force: true }); run('DELETE FROM blobs WHERE sha=?', b.sha); }
+    for (const b of q('SELECT sha FROM blobs')) if (!used.has(b.sha) && SHA.test(b.sha)) { fs.rmSync(blobPath(b.sha), { force: true }); run('DELETE FROM blobs WHERE sha=?', b.sha); }
   }
-  const TRASHABLE = ['courses', 'topics', 'folders', 'lessons', 'resources', 'assignments', 'exams', 'tasks', 'applications', 'projects', 'summary_chapters', 'flags', 'semesters'];
+  const TRASHABLE = ['courses', 'topics', 'folders', 'lessons', 'resources', 'assignments', 'exams', 'tasks', 'applications', 'projects', 'summary_chapters', 'summary_folders', 'flags', 'semesters'];
   function emptyTrash() { for (const t of TRASHABLE) for (const r of q(`SELECT id FROM ${t} WHERE deleted_at IS NOT NULL`)) hardDelete(t, r.id); }
 
   // ---- HTTP ----
@@ -424,7 +432,8 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       resources: resources.map(r => ({ ...pick(r, ['id', 'folder_id', 'lesson_id', 'title', 'kind', 'role', 'source', 'url', 'blob_sha', 'original_name', 'tags', 'sort']), body: r.kind === 'note' ? r.body : null, notes: o.notes ? r.notes : '' })),
       resource_topics: inR('resource_topics', 'resource_id', 'topic'),
       resource_relations: inR('resource_relations', 'resource_id', 'related_id'),
-      chapters: o.summary ? live('summary_chapters').map(s => pick(s, ['id', 'topic_id', 'title', 'body_md', 'sort'])) : [],
+      chapters: o.summary ? live('summary_chapters').map(s => pick(s, ['id', 'topic_id', 'folder_id', 'title', 'body_md', 'sort'])) : [],
+      summary_folders: o.summary ? live('summary_folders').map(f => pick(f, ['id', 'parent_id', 'name', 'sort'])) : [],
       assignments: o.deadlines ? live('assignments').map(a => pick(a, ['id', 'title', 'instructions_md', 'due_date', 'due_time'])) : [],
       exams: o.deadlines ? live('exams').map(e => pick(e, ['id', 'title', 'date', 'time', 'location'])) : [],
     };
@@ -503,7 +512,11 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         const link = (t, a, b) => { for (const x of list(t)) if (a[1][x[a[0]]] && b[1][x[b[0]]]) run(`INSERT OR IGNORE INTO ${t} (${a[0]}, ${b[0]}) VALUES (?,?)`, a[1][x[a[0]]], b[1][x[b[0]]]); };
         link('resource_topics', ['resource_id', map.r], ['topic_id', map.t]);
         link('resource_relations', ['resource_id', map.r], ['related_id', map.r]);
-        for (const s of list('chapters')) map.ch[s.id] = insert('summary_chapters', { course_id: cid, topic_id: map.t[s.topic_id] || null, title: str(s.title) || 'פרק', body_md: str(s.body_md), sort: Number(s.sort) || 0 }).id;
+        map.sf = {};
+        const sfs = list('summary_folders');
+        for (const f of sfs) map.sf[f.id] = insert('summary_folders', { course_id: cid, name: str(f.name) || 'תיקייה', sort: Number(f.sort) || 0 }).id;
+        for (const f of sfs) if (map.sf[f.parent_id]) run('UPDATE summary_folders SET parent_id=? WHERE id=?', map.sf[f.parent_id], map.sf[f.id]);
+        for (const s of list('chapters')) map.ch[s.id] = insert('summary_chapters', { course_id: cid, topic_id: map.t[s.topic_id] || null, folder_id: map.sf[s.folder_id] || null, title: str(s.title) || 'סיכום', body_md: str(s.body_md), sort: Number(s.sort) || 0 }).id;
         link('summary_sources', ['chapter_id', map.ch], ['resource_id', map.r]);
         for (const a of list('assignments')) map.a[a.id] = insert('assignments', { course_id: cid, title: str(a.title) || 'מטלה', instructions_md: str(a.instructions_md), due_date: a.due_date ? str(a.due_date) : null, due_time: a.due_time ? str(a.due_time) : null, status: 'not_started' }).id;
         link('assignment_topics', ['assignment_id', map.a], ['topic_id', map.t]);
@@ -537,9 +550,9 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       run('INSERT INTO assignment_topics (assignment_id, topic_id) VALUES (?,?)', a.id, t1.id);
       for (const [i, text] of ['לקרוא את הפתק', 'לשרטט ישויות', 'לבדוק נרמול'].entries()) insert('checklist', { owner_type: 'assignment', owner_id: a.id, text, done: i === 0 ? 1 : 0, sort: i });
       insert('exams', { course_id: c1.id, title: 'דוגמה: בוחן אמצע', date: addDaysIso(20), time: '10:00', location: 'אולם דוגמה' });
-      const proj = insert('projects', { ...S, name: 'פרויקט דוגמה: אפליקציית הזמנות', description: 'פרויקט מומצא להמחשה.', color: '#7a4fd6' });
-      const app = insert('applications', { title: 'טבלת הזמנות עם מפתח זר', course_id: c1.id, topic_id: t2.id, learned: 'נרמול וקשרי אחד-לרבים.', problem: 'פרטי לקוח מוכפלים בכל הזמנה.', proposal: 'להפריד טבלת לקוחות ולקשר בעזרת customer_id.', status: 'idea' });
-      run('INSERT INTO application_projects (application_id, project_id) VALUES (?,?)', app.id, proj.id);
+      const sf = insert('summary_folders', { course_id: c1.id, name: 'לקראת הבוחן' });
+      insert('summary_chapters', { course_id: c1.id, folder_id: sf.id, topic_id: t2.id, title: 'נרמול בקצרה', sort: 1, body_md: '### הגדרות\n- **נרמול** — פיצול טבלאות כדי שכל עובדה תישמר פעם אחת.\n\n### דוגמה\nפרטי לקוח שחוזרים בכל הזמנה עוברים לטבלת `customers`, וההזמנה שומרת רק `customer_id`.' });
+      insert('summary_chapters', { course_id: c1.id, topic_id: t1.id, title: 'ישויות וקשרים', sort: 2, body_md: 'ישות = דבר שרוצים לשמור עליו מידע (לקוח, הזמנה).\n\nקשר אחד-לרבים: לקוח אחד, הרבה הזמנות.' });
       return { ok: true, semester_id: sem.id };
     });
   }
@@ -547,7 +560,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     const courses = q('SELECT c.id FROM courses c JOIN semesters s ON s.id=c.semester_id WHERE s.sample=1 OR c.sample=1').map(r => r.id);
     tx(() => {
       for (const cid of courses) {
-        for (const t of ['resources', 'assignments', 'exams', 'applications', 'topics', 'lessons', 'folders', 'summary_chapters', 'tasks']) if (cols[t]?.includes('course_id')) for (const r of q(`SELECT id FROM ${t} WHERE course_id=?`, cid)) hardDelete(t, r.id);
+        for (const t of ['resources', 'assignments', 'exams', 'applications', 'topics', 'lessons', 'folders', 'summary_chapters', 'summary_folders', 'tasks']) if (cols[t]?.includes('course_id')) for (const r of q(`SELECT id FROM ${t} WHERE course_id=?`, cid)) hardDelete(t, r.id);
         hardDelete('courses', cid);
       }
       for (const t of ['projects', 'semesters', 'years']) for (const r of q(`SELECT id FROM ${t} WHERE sample=1`)) hardDelete(t, r.id);
@@ -563,8 +576,8 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     ['POST', /^\/api\/sample$/, () => loadSample()],
     ['DELETE', /^\/api\/sample$/, () => removeSample()],
     ['GET', /^\/api\/rows\/(\w+)\/(\d+)$/, (m) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return getRow(m[1], +m[2]) || (() => { throw httpErr(404, 'not found'); })(); }],
-    ['POST', /^\/api\/rows\/(\w+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return insert(m[1], b); }],
-    ['PATCH', /^\/api\/rows\/(\w+)\/(\d+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return update(m[1], +m[2], b); }],
+    ['POST', /^\/api\/rows\/(\w+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return insert(m[1], fileSafe(b)); }],
+    ['PATCH', /^\/api\/rows\/(\w+)\/(\d+)$/, (m, b) => { if (!userTable(m[1])) throw httpErr(404, 'unknown'); return update(m[1], +m[2], fileSafe(b)); }],
     ['DELETE', /^\/api\/rows\/(\w+)\/(\d+)$/, (m, b, p) => {
       const [t, id] = [m[1], +m[2]];
       if (!userTable(t)) throw httpErr(404, 'unknown');

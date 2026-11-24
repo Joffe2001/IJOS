@@ -475,3 +475,28 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; }
   .chapter { break-inside: auto; page-break-before: auto; }
   pre.code { white-space: pre-wrap; background: #f5f5f5; color: #000; }
 }
+
+/* summaries library */
+.sf-tree { padding: .8rem; }
+.sf-tree input[type=search] { width: 100%; margin-bottom: .6rem; }
+.sf-list { list-style: none; margin: 0; padding: 0; }
+.sf-list .sf-list { padding-inline-start: 1rem; border-inline-start: 1px solid var(--line-2); margin-inline-start: .55rem; }
+.sf-root { min-height: 2rem; border-radius: var(--radius-sm); }
+.sf-folder > details > summary { display: flex; align-items: center; justify-content: space-between; gap: .25rem; padding: .3rem .4rem; border-radius: var(--radius-sm); cursor: pointer; list-style: none; font-weight: 600; }
+.sf-folder > details > summary::-webkit-details-marker { display: none; }
+.sf-folder > details > summary::before { content: '◂'; color: var(--muted); font-size: .8em; margin-inline-end: .3rem; transition: transform .15s; }
+.sf-folder > details[open] > summary::before { transform: rotate(-90deg); }
+.sf-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sf-folder > details > summary:hover, .sf-item a:hover { background: var(--surface-2); }
+.sf-tools { display: flex; gap: .1rem; opacity: 0; transition: opacity .15s; }
+.sf-folder > details > summary:hover .sf-tools, .sf-folder > details > summary:focus-within .sf-tools, .sf-tools:focus-within { opacity: 1; }
+@media (hover: none) { .sf-tools { opacity: 1; } }
+.sf-tools .icon-btn { width: 1.8rem; height: 1.8rem; }
+.sf-item a { display: block; padding: .3rem .5rem; border-radius: var(--radius-sm); text-decoration: none; color: var(--ink-2); overflow-wrap: anywhere; }
+.sf-item a[aria-current] { background: var(--hi); color: var(--hi-ink); font-weight: 700; }
+.drop-on, .drop-on > details > summary { outline: 2px dashed var(--accent); outline-offset: 1px; background: var(--hi-soft); }
+.sf-meta { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; align-items: center; color: var(--muted); margin: 0 0 1rem; }
+.sf-meta label { display: inline-flex; align-items: center; gap: .4rem; margin: 0; }
+.sf-meta select { width: auto; min-width: 9rem; padding-block: .25rem; }
+.sf-title { font: inherit; font-size: 1.35rem; font-weight: 700; flex: 1; min-width: 12rem; margin: 0; }
+.sf-welcome { min-height: 12rem; display: grid; place-items: center; }

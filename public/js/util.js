@@ -103,6 +103,5 @@ export const SOURCE = { lecturer: 'מרצה / קורס', me: 'שלי', chatgpt: 
 export const SOURCE_CLASS = { lecturer: 'src-lecturer', me: 'src-me', chatgpt: 'src-ai', claude: 'src-ai', other: 'src-other' };
 export const STATUS = { not_started: 'טרם התחלתי', in_progress: 'בעבודה', ready: 'מוכן להגשה', submitted: 'הוגש', graded: 'נבדק' };
 export const STATUS_ORDER = ['not_started', 'in_progress', 'ready', 'submitted', 'graded'];
-export const APP_STATUS = { idea: 'רעיון', investigating: 'בבדיקה', ready: 'מוכן להעברה', implemented: 'יושם', archived: 'בארכיון' };
 export const sourceBadge = s => html`<span class="badge ${SOURCE_CLASS[s] || 'src-other'}">${s === 'chatgpt' || s === 'claude' ? 'AI · ' : ''}${SOURCE[s] || SOURCE.other}</span>`;
 export const options = (map, sel) => Object.entries(map).map(([k, v]) => html`<option value="${k}" ${String(k) === String(sel ?? '') ? raw('selected') : ''}>${v}</option>`);

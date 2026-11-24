@@ -23,13 +23,18 @@ export function readZip(file) {
     entries.set(name, { name, method, csize, usize, off });
     p += 46 + nlen + xlen + clen;
   }
-  const read = (name) => {
+  const read = (name, limit = 1100 * 1048576) => {
+    if (entries.get(name)?.usize > limit) throw new Error('Zip entry too large');
     const e = entries.get(name);
     if (!e) return null;
     const lh = readAt(e.off, 30);
     const data = readAt(e.off + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28), e.csize);
     if (e.method === 0) return data;
-    if (e.method === 8) return zlib.inflateRawSync(data);
+    if (e.method === 8) { // declared size is checked so a tiny entry cannot expand into gigabytes
+      const out = zlib.inflateRawSync(data, { maxOutputLength: Math.max(e.usize, 1) });
+      if (out.length !== e.usize) throw new Error('Corrupt zip entry');
+      return out;
+    }
     throw new Error('Unsupported zip compression');
   };
   return { names: [...entries.keys()], has: n => entries.has(n), read, close: () => fs.closeSync(fd) };
