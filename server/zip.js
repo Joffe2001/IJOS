@@ -27,11 +27,14 @@ export function readZip(file, { budget = Infinity } = {}) {
   const read = (name, limit = 1100 * 1048576) => {
     const e = entries.get(name);
     if (!e) return null;
-    if (e.usize > limit || e.csize > limit || e.usize > budget) throw new Error('Zip entry too large');
-    budget -= e.usize;
+    const cost = Math.max(e.usize, e.csize); // bytes actually allocated, whichever header field is larger
+    if (cost > limit || cost > budget) throw new Error('Zip entry too large');
+    budget -= cost;
     const lh = readAt(e.off, 30);
-    const data = readAt(e.off + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28), e.csize);
-    if (e.method === 0) return data;
+    const start = e.off + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
+    if (start + e.csize > size) throw new Error('Corrupt zip entry');
+    const data = readAt(start, e.csize);
+    if (e.method === 0) { if (e.csize !== e.usize) throw new Error('Corrupt zip entry'); return data; }
     if (e.method === 8) { // declared size is checked so a tiny entry cannot expand into gigabytes
       const out = zlib.inflateRawSync(data, { maxOutputLength: Math.max(e.usize, 1) });
       if (out.length !== e.usize) throw new Error('Corrupt zip entry');
