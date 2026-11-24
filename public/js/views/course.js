@@ -1,6 +1,5 @@
-import { html, raw, str, dialog, toast, api, errorToast, options, parseTags, KIND_ICON, SOURCE } from '../util.js';
+import { html, raw, str, dialog, toast, api, errorToast, options, KIND_ICON, SOURCE } from '../util.js';
 import { PALETTE } from './onboard.js';
-import { md } from '../md.js';
 import { S, T, byId, courseName, topicsOf, create, patch, unlink, nextAction, autosave } from '../store.js';
 import { bind, refresh, empty, resourceRow, statusPill, dueLabel, courseCrumbs, crumbs, pickFiles, pickResources, fieldHandlers, reorder, lessonLabel, courseOptions, setLinks } from '../ui.js';
 import { fmtDateTime, fmtIso, relDay } from '../time.js';
@@ -61,14 +60,13 @@ export function semester(root, [id]) {
 // ---------------- course sharing ----------------
 async function shareCourse(c) {
   const v = await dialog('שיתוף הקורס', html`<p>נוצר קובץ ZIP שאפשר לשלוח לחברים לכיתה. הם מייבאים אותו כקורס חדש אצלם, ושום דבר לא נדרס.</p>
-    <p class="hint">תמיד נכלל: פרטי הקורס, נושאים, שיעורים, תיקיות, קבצים וקישורים.<br>אף פעם לא נכלל: סטטוס מטלות, טיוטות, ציונים, משוב, תזכורות, נקודות לא ברורות ורעיונות לפרויקטים.</p>
+    <p class="hint">תמיד נכלל: שם הקורס, מרצה, צבע וסמל, נושאים, שיעורים, תיקיות, קבצים וקישורים.<br>אף פעם לא נכלל: סטטוס מטלות, טיוטות, ציונים, משוב, תזכורות ורעיונות לפרויקטים.</p>
     <label class="check"><input type="checkbox" name="notes"> הפתקים שלי (כולל פתקי שיעורים)</label>
     <label class="check"><input type="checkbox" name="mine" checked> קבצים שיצרתי בעצמי</label>
-    <label class="check"><input type="checkbox" name="summary" checked> הסיכומים (כולל התיקיות)</label>
     <label class="check"><input type="checkbox" name="deadlines" checked> מטלות ומבחנים (שם, הנחיות ותאריכים בלבד)</label>
     <p class="hint">שימו לב לזכויות יוצרים: שתפו רק חומרים שמותר לכם להעביר הלאה.</p>`, { submit: 'יצירת קובץ והורדה' });
   if (!v) return;
-  const q = new URLSearchParams(['notes', 'mine', 'summary', 'deadlines'].map(k => [k, v[k] ? '1' : '0']));
+  const q = new URLSearchParams(['notes', 'mine', 'deadlines'].map(k => [k, v[k] ? '1' : '0']));
   location.href = `/api/download/share/${c.id}?${q}`;
   toast('הקובץ יורד. שלחו אותו לחברים, והם יבחרו "ייבוא קורס ששיתפו איתי" בעמוד הסמסטר.');
 }
@@ -82,7 +80,7 @@ export function importShared(s) {
       const r = await api('POST', '/api/share/inspect', f);
       const n = r.counts || {};
       const v = await dialog('ייבוא קורס משותף', html`<p>בקובץ: <strong><bdi>${r.course}</bdi></strong></p>
-        <p class="hint">${n.topics ?? 0} נושאים · ${n.resources ?? 0} חומרים (${n.files ?? 0} קבצים, ${n.notes ?? 0} פתקים) · ${n.chapters ?? 0} פרקי סיכום · ${n.assignments ?? 0} מטלות · ${n.exams ?? 0} מבחנים</p>
+        <p class="hint">${n.topics ?? 0} נושאים · ${n.resources ?? 0} חומרים (${n.files ?? 0} קבצים, ${n.notes ?? 0} פתקים) · ${n.assignments ?? 0} מטלות · ${n.exams ?? 0} מבחנים</p>
         <label>שם הקורס אצלי<input name="name" dir="auto" required value="${r.course}"></label>
         <p class="hint">הקורס ייווסף כקורס חדש ל<bdi>${s.name}</bdi>. מטלות מגיעות במצב "לא התחלתי". סיכומי HTML מגיעים עם סקריפטים כבויים, ואפשר להפעיל אותם בפרטי החומר.</p>`, { submit: 'ייבוא' });
       if (!v) return;
@@ -96,80 +94,39 @@ export function importShared(s) {
 }
 
 // ---------------- course ----------------
-const TABS = [['overview', 'מידע על הקורס'], ['topics', 'נושאים'], ['lessons', 'שיעורים'], ['materials', 'חומרים ותיקיות'], ['assignments', 'מטלות'], ['exams', 'מבחנים'], ['summary', 'סיכומים']];
-export function course(root, [id, tab = 'overview'], query) {
+const TABS = [['materials', 'חומרים ותיקיות'], ['topics', 'נושאים'], ['lessons', 'שיעורים'], ['assignments', 'מטלות'], ['exams', 'מבחנים']];
+const BODY = { materials, topics: topicsTab, lessons: lessonsTab, assignments: asgTab, exams: examsTab };
+export function course(root, [id, tab], query) {
   const c = byId('courses', id);
   if (!c || c.deleted_at) throw new Error('הקורס לא נמצא');
-  if (tab === 'summary') { location.replace(`#/summary/${c.id}`); return; }
-  const body = { overview, topics: topicsTab, lessons: lessonsTab, materials, assignments: asgTab, exams: examsTab }[tab] || overview;
-  const part = body(c, query);
+  if (!BODY[tab]) tab = 'materials'; // also old links such as #/course/1/overview
+  const part = BODY[tab](c, query);
+  const syllabus = byId('resources', c.syllabus_resource_id);
   root.innerHTML = str(html`<div class="page">
     ${courseCrumbs(c.id)}
     <header class="page-head"><div class="course-title"><span class="course-badge lg" style="--c:${c.color || 'var(--accent)'}" aria-hidden="true">${c.icon || [...c.name.replace(/^[^\p{L}]+/u, '')][0] || '•'}</span><div><h1><bdi>${c.name}</bdi></h1>${c.sample ? html` <span class="sample-flag">דוגמה</span>` : ''}<p class="muted">${c.credits != null ? `${c.credits} נק״ז` : 'נק״ז לא הוגדרו'}${!c.counts_credits ? ' · לא נספר בחישוב' : ''}${c.lecturer ? ` · ${c.lecturer}` : ''}</p></div></div>
-      <div class="actions"><button class="btn" data-act="share">שיתוף הקורס</button><button class="btn" data-act="import">ייבוא קבצים</button><button class="btn" data-act="note">+ פתק</button></div></header>
-    <nav class="tabs" aria-label="אזורי הקורס">${TABS.map(([k, l]) => html`<a href="${k === 'summary' ? `#/summary/${c.id}` : `#/course/${c.id}/${k}`}" ${k === tab ? raw('aria-current="page"') : ''}>${l}</a>`)}</nav>
+      <div class="actions"><button class="btn" data-act="details">פרטי הקורס</button>${syllabus && !syllabus.deleted_at ? html`<a class="btn" href="#/r/${syllabus.id}">פתיחת הסילבוס</a>` : ''}<button class="btn" data-act="share">שיתוף הקורס</button><button class="btn" data-act="import">ייבוא קבצים</button><button class="btn" data-act="note">+ פתק</button></div></header>
+    <nav class="tabs" aria-label="אזורי הקורס">${TABS.map(([k, l]) => html`<a href="#/course/${c.id}/${k}" ${k === tab ? raw('aria-current="page"') : ''}>${l}</a>`)}</nav>
     <div class="tab-body">${part.html}</div></div>`);
   bind(root, {
     ...fieldHandlers,
     import: () => pickFiles({ course_id: c.id }),
     share: () => shareCourse(c),
+    details: () => editCourse(c),
     note: async () => { const r = await create('resources', { title: 'פתק חדש', kind: 'note', source: 'me', role: 'notes', course_id: c.id, body: '' }); location.hash = `#/r/${r.id}?edit=1`; },
     ...part.handlers,
   });
   part.mount?.(root);
 }
 
-function overview(c) {
-  const grading = parseTags(c.grading);
-  const syllabus = c.syllabus_resource_id ? byId('resources', c.syllabus_resource_id) : null;
-  const res = T('resources').filter(r => r.course_id === c.id);
-  const asg = T('assignments').filter(a => a.course_id === c.id && !['submitted', 'graded'].includes(a.status));
-  const exams = T('exams').filter(e => e.course_id === c.id);
-  const flags = T('flags').filter(f => f.course_id === c.id && f.status === 'open');
-  const f = (name, label, attrs = '') => html`<label>${label}<input name="${name}" value="${c[name] || ''}" dir="auto" data-change="field" data-table="courses" data-id="${c.id}" ${raw(attrs)}></label>`;
-  let saver;
-  return {
-    html: html`<div class="grid-2">
-      <section class="card"><h2 class="card-title">פרטי הקורס</h2><div class="form-grid">
-        ${f('name', 'שם הקורס', 'data-refresh required')}${f('code', 'מספר קורס')}${f('lecturer', 'מרצה')}${f('lecturer_contact', 'פרטי קשר')}${f('office_hours', 'שעות קבלה')}
-        <label>צבע הקורס<input type="color" name="color" value="${c.color || '#4f3df0'}" data-change="field" data-table="courses" data-id="${c.id}" data-refresh></label>${f('icon', 'סמל (אימוג׳י או אות)', 'maxlength="4" data-refresh')}
-        <label>סילבוס<select name="syllabus_resource_id" data-change="field" data-table="courses" data-id="${c.id}" data-nullable data-num data-refresh><option value="">— לא נבחר —</option>${res.filter(r => r.kind !== 'note').map(r => html`<option value="${r.id}" ${r.id === c.syllabus_resource_id ? raw('selected') : ''}>${r.title}</option>`)}</select></label>
-      </div>${syllabus ? html`<p><a class="btn btn-sm" href="#/r/${syllabus.id}">פתיחת הסילבוס</a></p>` : ''}
-      <p class="hint">שדות שלא ידועים נשארים ריקים. השינויים נשמרים אוטומטית.</p></section>
-      <section class="card"><h2 class="card-title">מבט מהיר</h2><ul class="plain stats">
-        <li><a href="#/course/${c.id}/materials">${res.length} חומרים</a></li>
-        <li><a href="#/course/${c.id}/assignments">${asg.length} מטלות פתוחות</a></li>
-        <li><a href="#/course/${c.id}/exams">${exams.length} מבחנים</a></li>
-        <li>${flags.length} נקודות לא ברורות פתוחות</li></ul>
-        ${asg.slice(0, 4).map(a => html`<p class="small"><a href="#/a/${a.id}" dir="auto">${a.title}</a> · ${dueLabel(a.due_date, a.due_time)}${nextAction(a) ? html` · הבא: <span dir="auto">${nextAction(a)}</span>` : ''}</p>`)}</section></div>
-      <section class="card"><h2 class="card-title">רכיבי ציון</h2>
-        ${grading.length ? html`<table class="table"><thead><tr><th>רכיב</th><th>משקל</th><th>הערות</th><th><span class="sr-only">פעולות</span></th></tr></thead><tbody>${grading.map((g, i) => html`<tr><td dir="auto">${g.name}</td><td>${g.weight ? `${g.weight}%` : '—'}</td><td dir="auto">${g.notes || ''}</td><td><button class="btn-link small" data-act="grade-edit" data-i="${i}">עריכה</button> <button class="btn-link small" data-act="grade-del" data-i="${i}">מחיקה</button></td></tr>`)}</tbody></table>
-          ${grading.reduce((n, g) => n + (Number(g.weight) || 0), 0) !== 100 && grading.some(g => g.weight) ? html`<p class="hint">סכום המשקלים: ${grading.reduce((n, g) => n + (Number(g.weight) || 0), 0)}%</p>` : ''}` : html`<p class="muted small">עדיין לא הוזנו רכיבי ציון. אפשר להעתיק אותם מהסילבוס.</p>`}
-        <button class="btn btn-sm" data-act="grade-add">+ רכיב ציון</button></section>
-      <section class="card"><h2 class="card-title">הנחיות והערות על הקורס</h2>
-        <label class="sr-only" for="info-md">הנחיות</label>
-        <textarea id="info-md" class="md-input" rows="8" dir="auto" placeholder="הנחיות הגשה, נוכחות, כללי הקורס… (Markdown)">${c.info_md}</textarea>
-        <details><summary class="small">תצוגה מעוצבת</summary><div class="prose" id="info-preview">${raw(md(c.info_md))}</div></details></section>`,
-    handlers: {
-      'grade-add': () => editGrade(c, grading, -1),
-      'grade-edit': el => editGrade(c, grading, +el.dataset.i),
-      'grade-del': async el => { grading.splice(+el.dataset.i, 1); await patch('courses', c.id, { grading }); await refresh(); },
-    },
-    mount(root) {
-      const ta = root.querySelector('#info-md');
-      saver = autosave({ table: 'courses', id: c.id, field: 'info_md', base: c, onSaved: row => Object.assign(c, row) });
-      ta.oninput = () => { saver.set(ta.value); root.querySelector('#info-preview').innerHTML = md(ta.value); };
-    },
-  };
-}
-async function editGrade(c, grading, i) {
-  const g = grading[i] || {};
-  const v = await dialog(i < 0 ? 'רכיב ציון חדש' : 'עריכת רכיב ציון', html`<label>שם הרכיב<input name="name" value="${g.name || ''}" dir="auto" required autofocus placeholder="למשל: מבחן סופי"></label>
-    <label>משקל באחוזים (אם ידוע)<input name="weight" type="number" min="0" max="100" value="${g.weight ?? ''}"></label><label>הערות<input name="notes" value="${g.notes || ''}" dir="auto" placeholder="למשל: ציון עובר 60"></label>`);
+async function editCourse(c) {
+  const files = T('resources').filter(r => r.course_id === c.id && r.kind !== 'note');
+  const v = await dialog('פרטי הקורס', html`<label>שם הקורס<input name="name" value="${c.name}" dir="auto" required autofocus></label>
+    <label>מרצה<input name="lecturer" value="${c.lecturer || ''}" dir="auto"></label>
+    <div class="form-grid"><label>צבע הקורס<input type="color" name="color" value="${c.color || '#4f3df0'}"></label><label>סמל (אימוג׳י או אות)<input name="icon" value="${c.icon || ''}" maxlength="4" dir="auto"></label></div>
+    <label>סילבוס<select name="syllabus_resource_id"><option value="">— לא נבחר —</option>${files.map(r => html`<option value="${r.id}" ${r.id === c.syllabus_resource_id ? raw('selected') : ''}>${r.title}</option>`)}</select></label>`);
   if (!v) return;
-  const row = { name: v.name.trim(), weight: v.weight === '' ? null : Number(v.weight), notes: v.notes };
-  if (i < 0) grading.push(row); else grading[i] = row;
-  await patch('courses', c.id, { grading });
+  await patch('courses', c.id, { name: v.name.trim() || c.name, lecturer: v.lecturer.trim(), color: v.color, icon: v.icon.trim(), syllabus_resource_id: v.syllabus_resource_id ? +v.syllabus_resource_id : null });
   await refresh();
 }
 
@@ -178,12 +135,11 @@ function topicsTab(c, query) {
   const all = topicsOf(c.id);
   const list = all.filter(t => showArch || !t.archived);
   const count = tid => S.data.resource_topics.filter(x => x.topic_id === tid && byId('resources', x.resource_id) && !byId('resources', x.resource_id).deleted_at).length;
-  const chapters = T('summary_chapters').filter(ch => ch.course_id === c.id);
   return {
     html: html`<section class="card">
       <form class="inline-form" data-submit="add-topic"><label class="sr-only" for="new-topic">נושא חדש</label><input id="new-topic" name="name" dir="auto" placeholder="נושא חדש, למשל: לולאות" required><button class="btn btn-sm">הוספת נושא</button></form>
       ${list.length ? html`<ul class="items">${list.map((t, i) => html`<li class="item ${t.archived ? 'archived' : ''}"><div class="item-main"><a href="#/topic/${t.id}" dir="auto">${t.name}</a>
-        <div class="item-meta">${count(t.id)} חומרים${chapters.some(ch => ch.topic_id === t.id) ? ' · יש סיכום' : ''}${t.archived ? ' · בארכיון' : ''}</div></div>
+        <div class="item-meta">${count(t.id)} חומרים${t.archived ? ' · בארכיון' : ''}</div></div>
         <span class="row-tools"><button class="icon-btn" data-act="t-move" data-id="${t.id}" data-dir="-1" aria-label="למעלה" ${i === 0 ? raw('disabled') : ''}>↑</button><button class="icon-btn" data-act="t-move" data-id="${t.id}" data-dir="1" aria-label="למטה" ${i === list.length - 1 ? raw('disabled') : ''}>↓</button>
         <button class="btn-link small" data-act="t-rename" data-id="${t.id}">שינוי שם</button><button class="btn-link small" data-act="t-arch" data-id="${t.id}">${t.archived ? 'החזרה' : 'ארכיון'}</button></span></li>`)}</ul>`
         : empty('עדיין אין נושאים. נושא מאגד חומרים משיעורים שונים — למשל "לולאות" או "מודל פורטר".')}
@@ -312,8 +268,6 @@ export function topic(root, [id]) {
   const groups = [['חומרי מרצה וקורס', res.filter(r => r.source === 'lecturer')], ['הסיכומים וההערות שלי', res.filter(r => r.source === 'me')], ['הסברים מ־AI', res.filter(r => ['chatgpt', 'claude'].includes(r.source))], ['אחר', res.filter(r => r.source === 'other' || !r.source)]];
   const asg = S.data.assignment_topics.filter(x => x.topic_id === t.id).map(x => byId('assignments', x.assignment_id)).filter(a => a && !a.deleted_at);
   const exams = S.data.exam_topics.filter(x => x.topic_id === t.id).map(x => byId('exams', x.exam_id)).filter(e => e && !e.deleted_at);
-  const chapters = T('summary_chapters').filter(ch => ch.topic_id === t.id);
-  const flags = T('flags').filter(f => f.status === 'open' && rids.includes(f.resource_id));
   root.innerHTML = str(html`<div class="page">${courseCrumbs(t.course_id, [['נושאים', `#/course/${t.course_id}/topics`], [t.name]])}
     <header class="page-head"><div><h1 dir="auto">${t.name}</h1><p class="muted">כל מה שיש לי על הנושא, מכל השיעורים</p></div>
       <div class="actions"><button class="btn" data-act="link-res">שיוך חומרים קיימים</button><button class="btn" data-act="import">ייבוא לנושא</button></div></header>
@@ -321,8 +275,6 @@ export function topic(root, [id]) {
     <div class="grid-2">
       <section class="card"><h2 class="card-title">חומרים (${res.length})</h2>${res.length ? groups.filter(g => g[1].length).map(([l, rs]) => html`<h3 class="sub">${l}</h3><ul class="res-list">${rs.map(r => resourceRow(r, { extra: html`<button class="btn-link small" data-act="unlink" data-id="${r.id}">ניתוק</button>` }))}</ul>`) : empty('אין חומרים משויכים. חומר אחד יכול להשתייך לכמה נושאים בלי לשכפל את הקובץ.')}</section>
       <div>
-        <section class="card"><h2 class="card-title">סיכומים</h2>${chapters.length ? html`<ul class="plain">${chapters.map(ch => html`<li><a href="#/summary/${t.course_id}?s=${ch.id}" dir="auto">${ch.title}</a></li>`)}</ul>` : html`<p class="muted small">עוד אין סיכום שמשויך לנושא הזה.</p>`}<a class="btn btn-sm" href="#/summary/${t.course_id}">לסיכומים של הקורס</a></section>
-        ${flags.length ? html`<section class="card"><h2 class="card-title">לא ברור (${flags.length})</h2><ul class="plain">${flags.map(f => html`<li><a href="#/r/${f.resource_id}?panel=unclear" dir="auto">${f.text}</a></li>`)}</ul></section>` : ''}
         <section class="card"><h2 class="card-title">מטלות ומבחנים</h2>${asg.length || exams.length ? html`<ul class="plain">${asg.map(a => html`<li><a href="#/a/${a.id}" dir="auto">${a.title}</a> ${statusPill(a.status)}</li>`)}${exams.map(e => html`<li><a href="#/exam/${e.id}" dir="auto">${e.title}</a>${e.date ? ` · ${fmtDateTime(e.date)}` : ''}</li>`)}</ul>` : html`<p class="muted small">אין מטלות או מבחנים שמקושרים לנושא.</p>`}</section>
       </div></div></div>`);
   bind(root, {

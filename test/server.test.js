@@ -133,18 +133,6 @@ test('backup → change → restore with validation and safety snapshot', async 
   await app.stop(); await app2.stop();
 });
 
-test('summary versions: snapshot and restore keep the pre-restore state', async () => {
-  const app = await start(tmp());
-  const ch = (await app.call('POST', '/api/rows/summary_chapters', { course_id: 3, title: 'לולאות', body_md: 'v1' })).body;
-  const v1 = (await app.call('POST', '/api/summary/3/snapshot', { reason: 't' })).body;
-  await app.call('PATCH', `/api/rows/summary_chapters/${ch.id}`, { body_md: 'v2' });
-  await app.call('POST', `/api/summary-versions/${v1.id}/restore`);
-  assert.equal((await app.call('GET', `/api/rows/summary_chapters/${ch.id}`)).body.body_md, 'v1');
-  const s = (await app.call('GET', '/api/state')).body;
-  assert.ok(s.summary_versions.some(v => v.reason === 'לפני שחזור גרסה'));
-  await app.stop();
-});
-
 // ---------- upgrade path ----------
 // Builds a schema-1 database the way the pre-IJOS app left it (no projects table, fixed `target` per application).
 function makeV1(dir) {
@@ -369,7 +357,7 @@ test('course sharing: export one course, classmate imports it as a new course wi
   await a.call('PATCH', `/api/rows/assignments/${asg.id}`, { status: 'submitted', grade: '95', draft_md: 'הטיוטה הפרטית שלי' });
   const up = (await a.call('POST', `/api/upload?name=${encodeURIComponent('הרצאה 1.docx')}&course_id=${c.id}&source=lecturer`, docx())).body.resource;
   await a.call('POST', '/api/rows/applications', { title: 'רעיון פרטי', course_id: c.id });
-  const noNotes = await a.call('GET', `/api/download/share/${c.id}?notes=0&mine=1&summary=1&deadlines=1`);
+  const noNotes = await a.call('GET', `/api/download/share/${c.id}?notes=0&mine=1&deadlines=1`);
   assert.equal(noNotes.status, 200);
   assert.match(decodeURIComponent(noNotes.headers.get('content-disposition')), /IJOS - /);
   const zf = path.join(tmp(), 'share.zip'); fs.writeFileSync(zf, noNotes.body);
@@ -377,6 +365,8 @@ test('course sharing: export one course, classmate imports it as a new course wi
   const json = JSON.stringify(data);
   assert.ok(!json.includes('הטיוטה הפרטית שלי') && !json.includes('"95"') && !json.includes('רעיון פרטי') && !json.includes('submitted'), 'no drafts, grades, statuses or ideas');
   assert.ok(data.resources.every(r => r.kind !== 'note'), 'notes left out when not chosen');
+  assert.deepEqual(Object.keys(data.course).sort(), ['color', 'credits', 'icon', 'lecturer', 'name', 'syllabus'], 'only the course fields that still exist');
+  assert.ok(!('chapters' in data) && !('summary_folders' in data) && !('summary_sources' in data), 'no summaries');
 
   const b = await start(tmp());
   await b.call('POST', '/api/rows/years', { name: 'שנה א׳' });
@@ -427,33 +417,34 @@ test('file references stay inside the data folder; risky files are never opened 
   await app.stop();
 });
 
-test('summaries in folders: create, nest, move, export with folder path, version restore keeps the folder, share carries folders', async () => {
+test('a share file from the released version (summaries, summary folders, old course fields) imports cleanly and ignores those parts', async () => {
   const app = await start(tmp());
-  await app.call('POST', '/api/rows/years', { name: 'א' });
-  await app.call('POST', '/api/rows/semesters', { year_id: 1, name: 'א', status: 'active' });
-  const c = (await app.call('POST', '/api/rows/courses', { semester_id: 1, name: 'קורס' })).body;
-  const top = (await app.call('POST', '/api/rows/summary_folders', { course_id: c.id, name: 'מבחן' })).body;
-  const sub = (await app.call('POST', '/api/rows/summary_folders', { course_id: c.id, parent_id: top.id, name: 'פרק 1' })).body;
-  const x = (await app.call('POST', '/api/rows/summary_chapters', { course_id: c.id, folder_id: sub.id, title: 'לולאות', body_md: 'for' })).body;
-  const md = (await app.call('GET', `/api/download/summary/${c.id}`)).body.toString('utf8');
-  assert.match(md, /## מבחן \/ פרק 1 \/ לולאות/);
-  const v = (await app.call('POST', `/api/summary/${c.id}/snapshot`, { reason: 'test' })).body;
-  await app.call('PATCH', `/api/rows/summary_chapters/${x.id}`, { folder_id: null, body_md: 'changed' });
-  await app.call('POST', `/api/summary-versions/${v.id}/restore`);
-  const back = (await app.call('GET', `/api/rows/summary_chapters/${x.id}`)).body;
-  assert.equal(back.folder_id, sub.id); assert.equal(back.body_md, 'for');
-  const share = await app.call('GET', `/api/download/share/${c.id}?summary=1`);
-  const b = await start(tmp());
-  await b.call('POST', '/api/rows/years', { name: 'א' });
-  await b.call('POST', '/api/rows/semesters', { year_id: 1, name: 'א' });
-  const tok = (await b.call('POST', '/api/share/inspect', share.body)).body.token;
-  const nc = (await b.call('POST', '/api/share/apply', { token: tok, semester_id: 1 })).body.course;
-  const st = (await b.call('GET', '/api/state')).body;
-  const f2 = st.summary_folders.filter(f => f.course_id === nc.id), s2 = st.summary_chapters.find(y => y.course_id === nc.id);
-  assert.equal(f2.length, 2);
-  const parent = f2.find(f => f.id === s2.folder_id);
-  assert.equal(parent.name, 'פרק 1'); assert.equal(f2.find(f => f.id === parent.parent_id).name, 'מבחן');
-  await app.stop(); await b.stop();
+  await app.call('POST', '/api/rows/years', { name: 'א' }); await app.call('POST', '/api/rows/semesters', { year_id: 1, name: 'א' });
+  const old = {
+    course: { name: 'קורס ישן', code: '10111', credits: 4, lecturer: 'ד״ר כהן', lecturer_contact: 'a@b.c', office_hours: 'ב׳ 10:00', grading: '[{"name":"מבחן","weight":70}]', info_md: '# הנחיות', color: '#e2562f', icon: 'ק', syllabus: null },
+    topics: [{ id: 1, name: 'לולאות', sort: 1 }], lessons: [], folders: [],
+    resources: [{ id: 7, kind: 'note', title: 'פתק', body: 'גוף', source: 'me' }],
+    resource_topics: [{ resource_id: 7, topic_id: 1 }], resource_relations: [],
+    chapters: [{ id: 3, topic_id: 1, folder_id: 9, title: 'סיכום', body_md: 'תוכן הסיכום', sort: 1 }],
+    summary_folders: [{ id: 9, parent_id: null, name: 'לקראת המבחן', sort: 1 }],
+    summary_sources: [{ chapter_id: 3, resource_id: 7 }],
+    assignments: [], exams: [],
+  };
+  const f = path.join(tmp(), 'old.zip');
+  writeZip(f, [{ name: 'manifest.json', data: Buffer.from(JSON.stringify({ app: 'ijos', kind: 'course', format: 1, counts: { chapters: 1 } })) }, { name: 'course.json', data: Buffer.from(JSON.stringify(old)) }]);
+  const ins = await app.call('POST', '/api/share/inspect', fs.readFileSync(f));
+  assert.equal(ins.status, 200);
+  const res = await app.call('POST', '/api/share/apply', { token: ins.body.token, semester_id: 1 });
+  assert.equal(res.status, 200);
+  const st = (await app.call('GET', '/api/state')).body;
+  const nc = st.courses.find(c => c.id === res.body.course.id);
+  assert.ok(nc.name === 'קורס ישן' && nc.lecturer === 'ד״ר כהן' && nc.color === '#e2562f' && nc.icon === 'ק' && nc.credits === 4, 'kept fields imported');
+  assert.ok(nc.code === '' && nc.lecturer_contact === '' && nc.office_hours === '' && nc.grading === '[]' && nc.info_md === '', 'removed fields ignored');
+  assert.equal(st.summary_chapters.length + st.summary_folders.length + st.summary_sources.length, 0, 'summaries ignored');
+  const note = st.resources.find(r => r.course_id === nc.id);
+  assert.equal(note.title, 'פתק');
+  assert.ok(st.resource_topics.some(x => x.resource_id === note.id), 'the rest of the course still imports');
+  await app.stop();
 });
 
 test('folder loops are refused or broken; zip metadata entries are size-capped', async () => {
@@ -469,7 +460,7 @@ test('folder loops are refused or broken; zip metadata entries are size-capped',
   const tok = (await app.call('POST', '/api/share/inspect', fs.readFileSync(f))).body.token;
   const nc = (await app.call('POST', '/api/share/apply', { token: tok, semester_id: 1 })).body.course;
   const st = (await app.call('GET', '/api/state')).body;
-  assert.ok(st.summary_folders.filter(x => x.course_id === nc.id).some(x => x.parent_id === null), 'loop broken');
+  assert.equal(st.summary_folders.filter(x => x.course_id === nc.id).length, 0, 'summary folders from old files are ignored');
   assert.ok(st.folders.filter(x => x.course_id === nc.id).every(x => x.parent_id === null));
   // manifest declared larger than 1 MB is refused before inflating
   const big = path.join(tmp(), 'big.zip'); writeZip(big, [{ name: 'manifest.json', data: Buffer.alloc(2 * 1048576, 32) }, { name: 'course.json', data: Buffer.from('{}') }]);

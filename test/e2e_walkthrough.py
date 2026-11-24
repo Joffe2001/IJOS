@@ -92,7 +92,7 @@ def t_onboard(page):
 def t_import(page):
     go(page, '/course/3')
     with page.expect_file_chooser() as fc:
-        page.locator('[data-act=import]').click()
+        page.locator('.page-head [data-act=import]').click()
     fc.value.set_files([os.path.join(FIX, n) for n in ['סיכום יסודות התכנות.html', 'מטלה תרגול 2.pdf', 'exercise1.js']])
     page.wait_for_timeout(500)
     page.select_option('dialog[open] select[name=source]', 'chatgpt')
@@ -189,20 +189,6 @@ def t_resume(page):
     go(page, '/r/2')
     assert '#page=2' in page.locator('.pane-main iframe').get_attribute('src')
 
-@step('unclear point → review task')
-def t_unclear(page):
-    go(page, '/r/4?panel=unclear')
-    page.locator('[data-act=add-flag]').click()
-    page.fill('dialog[open] textarea[name=text]', 'מה ההבדל בין בידול לחדשנות?')
-    page.fill('dialog[open] input[name=location]', 'שקף 5')
-    submit_dialog(page); page.wait_for_timeout(500)
-    page.locator('[data-act=flag-task]').first.click()
-    submit_dialog(page); page.wait_for_timeout(500)
-    st = api(page, '/api/state')
-    assert any(t['origin'] == 'unclear' for t in st['tasks'])
-    go(page, '/')
-    expect(page.locator('main')).to_contain_text('מה ההבדל בין בידול לחדשנות?')
-
 @step('office previews (PPTX, XLSX, DOCX) show text')
 def t_office(page):
     go(page, '/r/4'); page.wait_for_timeout(800)
@@ -252,11 +238,14 @@ def t_assignment(page):
 @step('deadline + reminder: due reminder appears, snooze to explicit time')
 def t_reminder(page):
     go(page, '/tasks')
-    page.fill('input[name=title]', 'לשלוח מייל למתרגל')
-    page.fill('form[data-submit=add] input[name=due_date]', '2026-11-20')
-    page.locator('form[data-submit=add] button').click(); page.wait_for_timeout(500)
+    expect(page.locator('main h1')).to_have_text('מטלות')
+    page.locator('[data-act=new-asg]').click()
+    page.fill('dialog[open] input[name=title]', 'לשלוח מייל למתרגל')
+    page.select_option('dialog[open] select[name=course_id]', label='מבוא לתכנות עם JavaScript')
+    page.fill('dialog[open] input[name=due_date]', '2026-11-20')
+    submit_dialog(page); page.wait_for_timeout(800)
     expect(page.locator('main')).to_contain_text('באיחור')
-    page.locator('[data-act=rem]').first.click()
+    page.locator('[data-act=rem-add]').click()
     page.locator('dialog[open] input[value=custom]').check()
     page.fill('dialog[open] input[name=custom]', '2026-01-01T09:00')
     submit_dialog(page); page.wait_for_timeout(600)
@@ -268,6 +257,7 @@ def t_reminder(page):
     expect(page.locator('#reminder-bar')).to_be_empty()
     st = api(page, '/api/state')
     assert st['reminders'][0]['remind_at'] == '2030-05-01T10:00'
+    go(page, '/tasks'); expect(page.locator('main')).to_contain_text('לשלוח מייל למתרגל'); shot(page, '08a-assignments')
     go(page, '/calendar?view=list'); shot(page, '08-calendar-list')
     go(page, '/calendar?view=month&m=2026-11'); shot(page, '09-calendar-month')
 
@@ -280,55 +270,37 @@ def t_search(page):
     expect(page.locator('main')).to_contain_text('תוכן הפתק')
     shot(page, '10-search')
 
-@step('C summaries: folder, summary, drag into folder, delete, version restore')
-def t_summary(page):
-    go(page, '/summary/3')
-    expect(page.locator('main')).to_contain_text('הסיכום הראשון שלכם לקורס')
-    page.locator('main [data-act=new-folder]').first.click()
-    page.fill('dialog[open] input[name=name]', 'לקראת המבחן'); submit_dialog(page); page.wait_for_timeout(700)
-    page.locator('.page-head [data-act=new]').click()
-    page.fill('dialog[open] input[name=title]', 'לולאות')
-    page.select_option('dialog[open] select[name=folder_id]', label='  '[:0] + '📁 לקראת המבחן')
-    page.select_option('dialog[open] select[name=topic_id]', label='לולאות')
-    submit_dialog(page); page.wait_for_timeout(900)
-    assert 'edit=1' in page.url, page.url
-    ed = page.locator('#ch-editor')
-    ed.fill('### הגדרות\n- **לולאה** — חזרה על קוד מספר פעמים\n'); page.wait_for_timeout(1500)
-    page.locator('[data-act=done]').click(); page.wait_for_timeout(600)
-    expect(page.locator('.summary-doc')).to_contain_text('חזרה על קוד מספר פעמים')
-    # a second summary at the top level, dragged into the folder
-    page.locator('.page-head [data-act=new]').click()
-    page.fill('dialog[open] input[name=title]', 'משתנים')
-    page.select_option('dialog[open] select[name=folder_id]', value='')
-    submit_dialog(page); page.wait_for_timeout(900)
-    page.locator('[data-act=done]').click(); page.wait_for_timeout(500)
-    page.locator('.sf-root > .sf-item a', has_text='משתנים').drag_to(page.locator('.sf-folder summary').first); page.wait_for_timeout(900)
-    st = api(page, '/api/state')
-    folder = next(f for f in st['summary_folders'] if f['name'] == 'לקראת המבחן')
-    assert all(x['folder_id'] == folder['id'] for x in st['summary_chapters'] if x['course_id'] == 3), 'drag and drop moved the summary'
-    page.locator('.sf-item a', has_text='לולאות').click(); page.wait_for_timeout(500)
-    shot(page, '11-summary')
-    go(page, '/summaries'); expect(page.locator('main')).to_contain_text('לולאות'); shot(page, '11b-summaries-overview')
-    # delete, then bring it back from the version history
-    go(page, '/summary/3'); page.locator('.sf-item a', has_text='לולאות').click(); page.wait_for_timeout(400)
-    page.locator('.sf-doc [data-act=del]').click(); submit_dialog(page); page.wait_for_timeout(800)
-    expect(page.locator('.sf-tree')).not_to_contain_text('לולאות')
-    go(page, '/summary/3/versions')
-    page.locator('main .plain a').first.click(); page.wait_for_timeout(600)
-    page.locator('[data-act=restore]').click(); page.wait_for_timeout(900)
-    expect(page.locator('.sf-tree')).to_contain_text('לולאות')
-    st = api(page, '/api/state')
-    x = next(x for x in st['summary_chapters'] if x['title'] == 'לולאות')
-    assert x['folder_id'] == folder['id'], 'restored into its folder'
-
-@step('D topic page shows its summaries')
-def t_topic_summary(page):
-    topic = next(t for t in api(page, '/api/state')['topics'] if t['name'] == 'לולאות')
-    go(page, f"/topic/{topic['id']}")
-    expect(page.locator('main')).to_contain_text('סיכומים')
-    page.locator('main a[href*="/summary/3?s="]').first.click(); page.wait_for_timeout(600)
-    assert '/summary/3?s=' in page.url, page.url
-    shot(page, '13a-topic')
+@step('course page: materials first; one dialog edits name, lecturer, colour, icon and syllabus')
+def t_course_page(page):
+    for h in ['/course/3', '/course/3/overview']:
+        go(page, h)
+        expect(page.locator('.tabs a[aria-current]')).to_have_text('חומרים ותיקיות')
+        expect(page.locator('.tab-body')).to_contain_text('סיכום יסודות התכנות')
+    assert [t.strip() for t in page.locator('.tabs a').all_inner_texts()] == ['חומרים ותיקיות', 'נושאים', 'שיעורים', 'מטלות', 'מבחנים']
+    expect(page.locator('main')).not_to_contain_text('מידע על הקורס')
+    assert page.locator('main a:has-text("פתיחת הסילבוס")').count() == 0
+    page.locator('[data-act=details]').click()
+    page.fill('dialog[open] input[name=name]', 'תכנות 1')
+    page.fill('dialog[open] input[name=lecturer]', 'ד״ר נועה לוי')
+    page.fill('dialog[open] input[name=color]', '#1d9a6c')
+    page.fill('dialog[open] input[name=icon]', '💻')
+    page.select_option('dialog[open] select[name=syllabus_resource_id]', label='מטלה תרגול 2')
+    shot(page, '12-course-details')
+    submit_dialog(page); page.wait_for_timeout(600)
+    head = page.locator('.page-head')
+    expect(head.locator('h1')).to_have_text('תכנות 1')
+    expect(head).to_contain_text('ד״ר נועה לוי')
+    expect(head.locator('.course-badge')).to_have_text('💻')
+    assert '#1d9a6c' in head.locator('.course-badge').get_attribute('style')
+    expect(head.locator('a:has-text("פתיחת הסילבוס")')).to_have_attribute('href', '#/r/2')
+    expect(page.locator('#sidebar')).to_contain_text('תכנות 1')
+    c = next(c for c in api(page, '/api/state')['courses'] if c['id'] == 3)
+    assert (c['name'], c['lecturer'], c['color'], c['icon'], c['syllabus_resource_id']) == ('תכנות 1', 'ד״ר נועה לוי', '#1d9a6c', '💻', 2), c
+    shot(page, '12b-course-header')
+    page.locator('[data-act=details]').click()
+    page.fill('dialog[open] input[name=name]', COURSES[2])
+    submit_dialog(page); page.wait_for_timeout(600)
+    expect(page.locator('.page-head h1')).to_have_text(COURSES[2])
 
 @step('trash: delete and restore a resource')
 def t_trash(page):
@@ -355,6 +327,27 @@ def t_narrow(page):
     shot(page, '15-narrow-nav')
     page.set_viewport_size({'width': 1440, 'height': 900})
 
+LEGACY = ['משימה ישנה', 'נקודה ישנה לא ברורה', 'עדיפות ישנה', 'סיכום ישן', 'תיקיית סיכומים ישנה']
+
+@step('rows of removed features (tasks, unclear points, today list, summaries) load without errors and are never shown')
+def t_legacy(page):
+    post = "([t, b]) => fetch('/api/rows/' + t, {method:'POST', headers:{'x-ijos':'1','Content-Type':'application/json'}, body: JSON.stringify(b)}).then(r => r.json())"
+    topic = next(t for t in api(page, '/api/state')['topics'] if t['name'] == 'לולאות')
+    task = page.evaluate(post, ['tasks', {'title': 'משימה ישנה', 'course_id': 3, 'due_date': '2026-11-20'}])
+    gone = page.evaluate(post, ['tasks', {'title': 'משימה ישנה בסל', 'course_id': 3}])
+    page.evaluate("id => fetch('/api/rows/tasks/' + id, {method:'DELETE', headers:{'x-ijos':'1'}})", gone['id'])
+    page.evaluate(post, ['flags', {'resource_id': 4, 'course_id': 4, 'text': 'נקודה ישנה לא ברורה'}])
+    page.evaluate(post, ['today', {'date': page.evaluate("new Date().toLocaleString('sv-SE', {timeZone: 'Asia/Jerusalem'}).slice(0, 10)"), 'text': 'עדיפות ישנה'}])
+    sf = page.evaluate(post, ['summary_folders', {'course_id': 3, 'name': 'תיקיית סיכומים ישנה'}])
+    page.evaluate(post, ['summary_chapters', {'course_id': 3, 'folder_id': sf['id'], 'topic_id': topic['id'], 'title': 'סיכום ישן', 'body_md': 'סיכום ישן'}])
+    page.evaluate(post, ['reminders', {'target_type': 'task', 'target_id': task['id'], 'remind_at': '2026-01-01T09:00'}])
+    for h in ['/', '/course/3', '/course/3/topics', f"/topic/{topic['id']}", '/r/4?panel=unclear', '/calendar?view=list', '/calendar?view=month&m=2026-11', '/tasks', '/trash', '/search?q=' + urllib.parse.quote('ישנה'), '/search?q=' + urllib.parse.quote('ישן'), '/settings']:
+        go(page, h)
+        text = page.locator('body').inner_text()
+        assert 'לא הצלחנו להציג' not in text, h
+        assert not any(x in text for x in LEGACY), f'{h} shows a removed feature'
+    expect(page.locator('#reminder-bar')).to_be_empty()
+
 @step('E backup → clean installation → restore through the UI → content verified')
 def t_backup_restore(page):
     b = page.evaluate("fetch('/api/backup', {method:'POST', headers:{'x-ijos':'1'}}).then(r => r.json())")
@@ -377,6 +370,9 @@ def t_backup_restore(page):
     assert len([r for r in st['resources'] if not r['deleted_at']]) >= 9
     integ = page.evaluate("fetch('/api/integrity').then(r => r.json())")
     assert integ['missing'] == [], integ
+    assert all(st[t] for t in ['tasks', 'flags', 'today', 'summary_chapters']), 'rows of removed features restored as they were'
+    go(page, '/', base2)
+    assert 'לא הצלחנו להציג' not in page.locator('main').inner_text()
     go(page, '/r/4', base2); page.wait_for_timeout(800)
     expect(page.locator('.slides li').first).to_contain_text('מודל חמשת הכוחות')
     stop_server(PORT2)
@@ -402,7 +398,6 @@ def t_theme(page):
     go(page, '/r/1'); page.wait_for_timeout(900)
     assert page.evaluate("getComputedStyle(document.querySelector('iframe.frame')).backgroundColor") == 'rgb(255, 255, 255)'
     shot(page, '21-workspace-dark')
-    go(page, '/summary/3'); shot(page, '22-summary-dark')
     page.locator('[data-theme-set=light]').click(); page.wait_for_timeout(300)
 
 @step('keyboard: skip link first, visible focus, Ctrl+K search; reduced motion honoured')
@@ -484,7 +479,7 @@ with sync_playwright() as p:
     page = b.new_page(viewport={'width': 1440, 'height': 900}, locale='he-IL', timezone_id='Asia/Jerusalem')
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.on('console', lambda m: m.type == 'error' and errors.append(m.text))
-    for t in [t_onboard, t_import, t_dash, t_topics, t_html, t_multi_topic, t_note, t_resume, t_unclear, t_office, t_assignment, t_reminder, t_search, t_summary, t_topic_summary, t_trash, t_states, t_narrow, t_backup_restore, t_restart, t_theme, t_a11y, t_long, t_screens, t_plan]:
+    for t in [t_onboard, t_import, t_dash, t_topics, t_html, t_multi_topic, t_note, t_resume, t_office, t_assignment, t_reminder, t_search, t_course_page, t_trash, t_states, t_narrow, t_legacy, t_backup_restore, t_restart, t_theme, t_a11y, t_long, t_screens, t_plan]:
         t(page)
     b.close()
 for port in list(procs): stop_server(port)

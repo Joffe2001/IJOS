@@ -5,9 +5,9 @@ import { bind, refresh, empty } from '../ui.js';
 import { setTheme } from '../app.js';
 import { fmtIso } from '../time.js';
 
-const TYPE = { projects: 'פרויקטים', resources: 'חומרים ופתקים', assignments: 'מטלות', exams: 'מבחנים', summary_chapters: 'סיכומים', summary_folders: 'תיקיות סיכומים', applications: 'יישומים לפרויקטים', topics: 'נושאים', lessons: 'שיעורים', tasks: 'משימות', flags: 'נקודות לא ברורות' };
-const FIELD = { title: 'כותרת', name: 'שם', tags: 'תגיות', notes: 'הערות', original_name: 'שם הקובץ', url: 'כתובת', body: 'תוכן הפתק', text_content: 'תוכן הקובץ', body_md: 'תוכן', instructions_md: 'הנחיות', next_action: 'פעולה הבאה', notes_md: 'הערות', draft_md: 'טיוטה', feedback_md: 'משוב', location: 'מיקום', description: 'תיאור', learned: 'מה למדתי', problem: 'בעיה', proposal: 'יישום', benefit: 'תועלת', questions: 'שאלות', acceptance: 'קריטריונים', text: 'טקסט', date: 'תאריך' };
-const href = r => ({ resources: `#/r/${r.id}`, assignments: `#/a/${r.id}`, exams: `#/exam/${r.id}`, summary_chapters: `#/summary/${r.course_id}?s=${r.id}`, topics: `#/topic/${r.id}`, lessons: `#/lesson/${r.id}`, tasks: '#/tasks', flags: '#/' })[r.table];
+const TYPE = { projects: 'פרויקטים', resources: 'חומרים ופתקים', assignments: 'מטלות', exams: 'מבחנים', applications: 'יישומים לפרויקטים', topics: 'נושאים', lessons: 'שיעורים' };
+const FIELD = { title: 'כותרת', name: 'שם', tags: 'תגיות', notes: 'הערות', original_name: 'שם הקובץ', url: 'כתובת', body: 'תוכן הפתק', text_content: 'תוכן הקובץ', instructions_md: 'הנחיות', next_action: 'פעולה הבאה', notes_md: 'הערות', draft_md: 'טיוטה', feedback_md: 'משוב', location: 'מיקום', description: 'תיאור', learned: 'מה למדתי', problem: 'בעיה', proposal: 'יישום', benefit: 'תועלת', questions: 'שאלות', acceptance: 'קריטריונים', date: 'תאריך' };
+const href = r => ({ resources: `#/r/${r.id}`, assignments: `#/a/${r.id}`, exams: `#/exam/${r.id}`, topics: `#/topic/${r.id}`, lessons: `#/lesson/${r.id}` })[r.table];
 
 export async function search(root, _, query) {
   const q = (query.get('q') || '').trim();
@@ -23,17 +23,17 @@ export async function search(root, _, query) {
       <div class="item-meta">${r.course_id ? html`<bdi>${courseName(r.course_id)}</bdi> · ` : ''}נמצא ב: ${r.matched.map(f => FIELD[f] || f).join(', ')}</div>
       ${r.snippet && !r.matched.every(f => ['title', 'name'].includes(f)) ? html`<p class="snippet small" dir="auto">…${mark(r.snippet)}…</p>` : ''}</div></li>`)}</ul></section>`)}
     ${q && !results.length ? html`<section class="card">${empty('לא נמצאו תוצאות. נסו מילה קצרה יותר — החיפוש מוצא גם חלקי מילים.')}</section>` : ''}
-    <aside class="notice small"><strong>מה נכלל בחיפוש:</strong> כותרות, תגיות, הערות, שמות קבצים, פתקים, סיכומים מרכזיים, מטלות, מבחנים ויישומים, וגם <strong>תוכן</strong> של קבצי Word (DOCX), PowerPoint (PPTX), Excel (XLSX), HTML, טקסט, Markdown וקוד.
+    <aside class="notice small"><strong>מה נכלל בחיפוש:</strong> כותרות, תגיות, הערות, שמות קבצים, פתקים, מטלות, מבחנים ויישומים, וגם <strong>תוכן</strong> של קבצי Word (DOCX), PowerPoint (PPTX), Excel (XLSX), HTML, טקסט, Markdown וקוד.
       <strong>לא נכלל:</strong> תוכן של קובצי PDF, תמונות ופורמטים ישנים (DOC/PPT/XLS) — הם נמצאים רק לפי כותרת, תגיות והערות.${unsearchable ? ` כרגע ${unsearchable} קבצים כאלה.` : ''}</aside></div>`);
 }
 
-const TRASH = ['resources', 'assignments', 'exams', 'tasks', 'applications', 'projects', 'summary_chapters', 'summary_folders', 'topics', 'lessons', 'folders', 'courses', 'flags', 'semesters'];
+const TRASH = ['resources', 'assignments', 'exams', 'applications', 'projects', 'topics', 'lessons', 'folders', 'courses', 'semesters'];
 const TNAME = { ...TYPE, folders: 'תיקיות', courses: 'קורסים', semesters: 'סמסטרים' };
 export function trash(root) {
   const items = TRASH.flatMap(t => all(t).filter(r => r.deleted_at).map(r => ({ ...r, table: t }))).sort((a, b) => b.deleted_at.localeCompare(a.deleted_at));
   root.innerHTML = str(html`<div class="page"><header class="page-head"><div><h1>סל מחזור</h1><p class="muted">פריטים שנמחקו נשמרים כאן עד שתרוקנו את הסל. הקבצים עצמם נמחקים רק בריקון.</p></div>
     ${items.length ? html`<div class="actions"><button class="btn danger" data-act="empty">ריקון הסל</button></div>` : ''}</header>
-    <section class="card">${items.length ? html`<ul class="items">${items.map(r => html`<li class="item"><div class="item-main"><span dir="auto">${r.kind ? KIND_ICON[r.kind] + ' ' : ''}${r.title || r.name || r.text}</span>
+    <section class="card">${items.length ? html`<ul class="items">${items.map(r => html`<li class="item"><div class="item-main"><span dir="auto">${r.kind ? KIND_ICON[r.kind] + ' ' : ''}${r.title || r.name}</span>
       <div class="item-meta">${TNAME[r.table]}${r.course_id ? html` · <bdi>${courseName(r.course_id)}</bdi>` : ''} · נמחק ${fmtIso(r.deleted_at)}</div></div>
       <button class="btn btn-sm" data-act="restore" data-t="${r.table}" data-id="${r.id}">שחזור</button><button class="btn btn-sm danger" data-act="purge" data-t="${r.table}" data-id="${r.id}">מחיקה לצמיתות</button></li>`)}</ul>` : empty('הסל ריק.')}</section></div>`);
   bind(root, {
@@ -58,10 +58,10 @@ export async function settings(root) {
       : html`<p class="muted">סמסטר דוגמה עם שני קורסים מומצאים, מטלה, מבחן, פתק ופרויקט. טוב כדי לראות איך הכול עובד.</p><button class="btn" data-act="sample-load">טעינת נתוני דוגמה</button>`}</section>
     <section class="card"><h2 class="card-title">איפה הנתונים נשמרים</h2>
       <p>כל הנתונים נשמרים במחשב שלך, בתיקייה: <bdi dir="ltr" class="mono">${S.data.meta.dataDir}</bdi></p>
-      <ul class="small"><li><bdi dir="ltr" class="mono">study.db</bdi>: כל הרשומות (קורסים, פתקים, מטלות, סיכומים…)</li><li><bdi dir="ltr" class="mono">blobs\\</bdi>: עותקים של הקבצים שייבאתם. הקבצים המקוריים במחשב לא משתנים.</li><li><bdi dir="ltr" class="mono">backups\\</bdi>: גיבויים. <bdi dir="ltr" class="mono">backups\\auto\\</bdi>: צילום יומי אוטומטי של מסד הנתונים (14 אחרונים)</li></ul>
+      <ul class="small"><li><bdi dir="ltr" class="mono">study.db</bdi>: כל הרשומות (קורסים, פתקים, מטלות, מבחנים…)</li><li><bdi dir="ltr" class="mono">blobs\\</bdi>: עותקים של הקבצים שייבאתם. הקבצים המקוריים במחשב לא משתנים.</li><li><bdi dir="ltr" class="mono">backups\\</bdi>: גיבויים. <bdi dir="ltr" class="mono">backups\\auto\\</bdi>: צילום יומי אוטומטי של מסד הנתונים (14 אחרונים)</li></ul>
       <p class="hint">כדי לשמור על הנתונים גם אם המחשב ייפגע, העתיקו מדי פעם קובץ גיבוי לענן או לדיסק חיצוני.</p></section>
     <section class="card"><h2 class="card-title">גיבוי</h2><p>גיבוי מלא כולל את כל הרשומות ואת כל הקבצים, בקובץ ZIP אחד.</p>
-      <button class="btn btn-primary" data-act="backup">יצירת גיבוי והורדה</button> <a class="btn" href="/api/download/notes">ייצוא כל הפתקים והסיכומים כ־Markdown</a>
+      <button class="btn btn-primary" data-act="backup">יצירת גיבוי והורדה</button> <a class="btn" href="/api/download/notes">ייצוא כל הפתקים כ־Markdown</a>
       ${backups.length ? html`<details><summary>גיבויים שמורים (${backups.length})</summary><ul class="plain small">${backups.map(b => html`<li class="row-between"><bdi dir="ltr" class="mono">${b.name}</bdi> <span>${fmtSize(b.size)} · <a href="/api/download/backup/${encodeURIComponent(b.name)}">הורדה</a></span></li>`)}</ul></details>` : ''}</section>
     <section class="card"><h2 class="card-title">שחזור מגיבוי</h2>
       <p>בחרו קובץ גיבוי (<bdi dir="ltr">.zip</bdi>) או צילום מסד נתונים (<bdi dir="ltr">.db</bdi>). הקובץ ייבדק קודם, ותראו סיכום לפני שמשהו משתנה.</p>
@@ -94,7 +94,7 @@ export async function settings(root) {
     out.innerHTML = str(html`<p class="loading">בודק את הגיבוי…</p>`);
     try {
       const r = await api('POST', '/api/restore/inspect', f);
-      const LBL = { courses: 'קורסים', resources: 'חומרים', assignments: 'מטלות', exams: 'מבחנים', summary_chapters: 'סיכומים', applications: 'יישומים' };
+      const LBL = { courses: 'קורסים', resources: 'חומרים', assignments: 'מטלות', exams: 'מבחנים', applications: 'יישומים' };
       out.innerHTML = str(html`<div class="notice"><p><strong>הגיבוי תקין.</strong> ${r.created_at ? `נוצר ${fmtIso(r.created_at)}.` : 'צילום מסד נתונים בלבד (ללא קבצים).'}</p>
         <table class="table"><thead><tr><th></th><th>בגיבוי</th><th>כרגע</th></tr></thead><tbody>${Object.keys(LBL).map(k => html`<tr><td>${LBL[k]}</td><td>${r.backup[k]}</td><td>${r.current[k]}</td></tr>`)}</tbody></table>
         ${r.missingFiles.length ? html`<p class="flag flag-danger">${r.missingFiles.length} קבצים שמוזכרים בגיבוי אינם בו ואינם במחשב: ${r.missingFiles.slice(0, 10).join(', ')}${r.missingFiles.length > 10 ? '…' : ''}. הרשומות ישוחזרו, והקבצים יסומנו כחסרים.</p>` : ''}

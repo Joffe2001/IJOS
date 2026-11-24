@@ -45,13 +45,12 @@ export function nextAction(a) {
   return item ? item.text : '';
 }
 
-// Reminder target metadata (title + due) used by reminders and calendar.
+// Reminder target metadata (title + due) used by reminders and calendar. Other targets (e.g. tasks from older versions) are never shown.
 export function targetInfo(type, id) {
-  const row = byId(type === 'assignment' ? 'assignments' : type === 'exam' ? 'exams' : 'tasks', id);
+  const row = byId(type === 'assignment' ? 'assignments' : type === 'exam' ? 'exams' : null, id);
   if (!row || row.deleted_at) return null;
   if (type === 'exam') return { row, title: row.title, date: row.date, time: row.time, href: `#/exam/${id}` };
-  if (type === 'assignment') return { row, title: row.title, date: row.due_date, time: row.due_time, href: `#/a/${id}` };
-  return { row, title: row.title, date: row.due_date, time: row.due_time, href: `#/tasks` };
+  return { row, title: row.title, date: row.due_date, time: row.due_time, href: `#/a/${id}` };
 }
 // When a due date changes, move reminders that were defined relative to it.
 export async function syncReminders(type, id) {

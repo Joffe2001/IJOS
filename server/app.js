@@ -60,45 +60,16 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     const set = {};
     for (const k of Object.keys(data)) if (cols[t].includes(k) && !['id', 'created_at', 'updated_at'].includes(k)) set[k] = norm(data[k]);
     if (!Object.keys(set).length) return prev;
-    // Version history: keep earlier note text / summary state, at most one snapshot per 30 minutes of editing.
+    // Version history: keep earlier note text, at most one snapshot per 30 minutes of editing.
     if (t === 'resources' && 'body' in set && prev.body && set.body !== prev.body) {
       const last = one('SELECT created_at FROM resource_versions WHERE resource_id=? AND body IS NOT NULL ORDER BY id DESC LIMIT 1', id);
       if (!last || Date.now() - Date.parse(last.created_at) > VERSION_GAP_MS) run('INSERT INTO resource_versions (resource_id, body, label, created_at) VALUES (?,?,?,?)', id, prev.body, 'שמירה אוטומטית', now());
-    }
-    if (t === 'summary_chapters' && ('body_md' in set || 'title' in set)) {
-      const last = one('SELECT created_at FROM summary_versions WHERE course_id=? ORDER BY id DESC LIMIT 1', prev.course_id);
-      if (!last || Date.now() - Date.parse(last.created_at) > VERSION_GAP_MS) snapshotSummary(prev.course_id, 'לפני עריכה');
     }
     if (t === 'resources' && 'body' in set) set.text_content = set.body;
     if (cols[t].includes('updated_at')) set.updated_at = now();
     const keys = Object.keys(set);
     run(`UPDATE ${t} SET ${keys.map(k => k + '=?').join(',')} WHERE id=?`, ...keys.map(k => set[k]), id);
     return getRow(t, id);
-  }
-
-  function snapshotSummary(courseId, reason) {
-    const chapters = q('SELECT * FROM summary_chapters WHERE course_id=? AND deleted_at IS NULL ORDER BY sort, id', courseId);
-    const sources = q('SELECT s.* FROM summary_sources s JOIN summary_chapters c ON c.id=s.chapter_id WHERE c.course_id=?', courseId);
-    return insert('summary_versions', { course_id: courseId, snapshot: JSON.stringify({ chapters, sources }), reason });
-  }
-
-  function restoreSummary(versionId) {
-    const v = getRow('summary_versions', versionId);
-    if (!v) throw httpErr(404, 'version not found');
-    const snap = JSON.parse(v.snapshot);
-    return tx(() => {
-      snapshotSummary(v.course_id, 'לפני שחזור גרסה');
-      const t = now();
-      run('UPDATE summary_chapters SET deleted_at=? WHERE course_id=? AND deleted_at IS NULL', t, v.course_id);
-      for (const c of snap.chapters) {
-        const exists = getRow('summary_chapters', c.id);
-        if (exists) run('UPDATE summary_chapters SET title=?, body_md=?, topic_id=?, folder_id=?, sort=?, deleted_at=NULL, updated_at=? WHERE id=?', c.title, c.body_md, c.topic_id, c.folder_id ?? null, c.sort, t, c.id);
-        else run('INSERT INTO summary_chapters (id, course_id, topic_id, folder_id, title, body_md, sort, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)', c.id, v.course_id, c.topic_id, c.folder_id ?? null, c.title, c.body_md, c.sort, c.created_at, t);
-        run('DELETE FROM summary_sources WHERE chapter_id=?', c.id);
-      }
-      for (const s of snap.sources) run('INSERT OR IGNORE INTO summary_sources (chapter_id, resource_id) VALUES (?,?)', s.chapter_id, s.resource_id);
-      return { ok: true };
-    });
   }
 
   function state() {
@@ -227,12 +198,9 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       ['resources', 'title', ['title', 'tags', 'notes', 'original_name', 'url', 'body', 'text_content']],
       ['assignments', 'title', ['title', 'instructions_md', 'next_action', 'notes_md', 'draft_md', 'feedback_md']],
       ['exams', 'title', ['title', 'location', 'notes_md']],
-      ['summary_chapters', 'title', ['title', 'body_md']],
       ['applications', 'title', ['title', 'learned', 'problem', 'proposal', 'benefit', 'questions', 'acceptance', 'next_action']],
       ['topics', 'name', ['name', 'description']],
       ['lessons', 'title', ['title', 'notes_md', 'date']],
-      ['tasks', 'title', ['title', 'notes']],
-      ['flags', 'text', ['text', 'location']],
     ];
     const out = [];
     for (const [t, titleCol, fields] of sets) {
@@ -250,19 +218,11 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
 
   // ---- export ----
   const mdName = s => String(s || 'untitled').replace(/[\\/:*?"<>|\n]/g, '_').slice(0, 80);
-  function summaryMd(courseId) {
-    const c = getRow('courses', courseId);
-    const ch = q('SELECT * FROM summary_chapters WHERE course_id=? AND deleted_at IS NULL ORDER BY sort, id', courseId);
-    const src = id => q('SELECT r.title FROM summary_sources s JOIN resources r ON r.id=s.resource_id WHERE s.chapter_id=?', id).map(r => r.title);
-    const fpath = id => { const out = []; for (let f = id && getRow('summary_folders', id); f && !f.deleted_at && out.length < 20; f = f.parent_id && getRow('summary_folders', f.parent_id)) out.unshift(f.name); return out.length ? out.join(' / ') + ' / ' : ''; };
-    return `# סיכומים — ${c.name}\n\n` + ch.map(x => `## ${fpath(x.folder_id)}${x.title}\n\n${x.body_md || ''}\n${src(x.id).length ? `\n_מקורות: ${src(x.id).join(', ')}_\n` : ''}`).join('\n');
-  }
   function exportAllMd() {
     const file = path.join(dirs.tmp, `ijos-notes-${stamp()}.zip`);
     const entries = [];
     const courseName = id => mdName(getRow('courses', id)?.name || 'לא ממוין');
     for (const n of q("SELECT * FROM resources WHERE kind='note' AND deleted_at IS NULL")) entries.push({ name: `${courseName(n.course_id)}/notes/${n.id}-${mdName(n.title)}.md`, data: Buffer.from(`# ${n.title}\n\n${n.body || ''}`) });
-    for (const c of q('SELECT * FROM courses WHERE deleted_at IS NULL')) if (one('SELECT 1 FROM summary_chapters WHERE course_id=? AND deleted_at IS NULL', c.id)) entries.push({ name: `${mdName(c.name)}/summaries.md`, data: Buffer.from(summaryMd(c.id)) });
     for (const a of q('SELECT * FROM applications WHERE deleted_at IS NULL')) entries.push({ name: `applications/${a.id}-${mdName(a.title)}.md`, data: Buffer.from(briefMd(a)) });
     writeZip(file, entries);
     return file;
@@ -290,7 +250,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     snapshotDb(dbCopy);
     try {
       const shas = q('SELECT sha FROM blobs').map(b => b.sha).filter(s => fs.existsSync(blobPath(s)));
-      const counts = Object.fromEntries(['courses', 'resources', 'assignments', 'exams', 'summary_chapters', 'applications'].map(t => [t, one(`SELECT COUNT(*) n FROM ${t}`).n]));
+      const counts = Object.fromEntries(['courses', 'resources', 'assignments', 'exams', 'applications'].map(t => [t, one(`SELECT COUNT(*) n FROM ${t}`).n]));
       const manifest = { app: 'ijos', app_version: APP_VERSION, schema: SCHEMA_VERSION, created_at: now(), files: shas.length, counts };
       const out = path.join(dirs.backups, `ijos-backup-${stamp()}.zip`);
       writeZip(out, [{ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2)) }, { name: 'study.db', file: dbCopy }, ...shas.map(s => ({ name: `blobs/${s}`, file: blobPath(s) }))]);
@@ -331,7 +291,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         const shas = [...new Set(tdb.prepare('SELECT blob_sha s FROM resources WHERE blob_sha IS NOT NULL UNION SELECT blob_sha FROM resource_versions WHERE blob_sha IS NOT NULL').all().map(r => r.s))];
         const missing = shas.filter(s => !(zip?.has(`blobs/${s}`)) && !fs.existsSync(blobPath(s)));
         const names = Object.fromEntries(tdb.prepare('SELECT blob_sha, title FROM resources').all().map(r => [r.blob_sha, r.title]));
-        const keys = ['courses', 'resources', 'assignments', 'exams', 'summary_chapters', 'applications'];
+        const keys = ['courses', 'resources', 'assignments', 'exams', 'applications'];
         pending.set(token, { zipFile: zip ? got.tmp : null, dbTmp });
         return { token, kind: zip ? 'full' : 'database-only', created_at: manifest?.created_at || null, schema: ver,
           backup: Object.fromEntries(keys.map(k => [k, count(k)])), current: Object.fromEntries(keys.map(k => [k, one(`SELECT COUNT(*) n FROM ${k}`).n])),
@@ -407,13 +367,15 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     const used = new Set(q('SELECT blob_sha s FROM resources WHERE blob_sha IS NOT NULL UNION SELECT blob_sha FROM resource_versions WHERE blob_sha IS NOT NULL').map(r => r.s));
     for (const b of q('SELECT sha FROM blobs')) if (!used.has(b.sha) && SHA.test(b.sha)) { fs.rmSync(blobPath(b.sha), { force: true }); run('DELETE FROM blobs WHERE sha=?', b.sha); }
   }
-  const TRASHABLE = ['courses', 'topics', 'folders', 'lessons', 'resources', 'assignments', 'exams', 'tasks', 'applications', 'projects', 'summary_chapters', 'summary_folders', 'flags', 'semesters'];
+  // The last four belong to features that no longer have a screen. Rows deleted back then must still go when the trash is emptied.
+  const TRASHABLE = ['courses', 'topics', 'folders', 'lessons', 'resources', 'assignments', 'exams', 'applications', 'projects', 'semesters', 'tasks', 'summary_chapters', 'summary_folders', 'flags'];
   function emptyTrash() { for (const t of TRASHABLE) for (const r of q(`SELECT id FROM ${t} WHERE deleted_at IS NOT NULL`)) hardDelete(t, r.id); }
 
   // ---- HTTP ----
   // ---- course sharing: one course → .zip a classmate can import as a NEW course. Personal progress never leaves. ----
-  // Included: course info, topics, lessons, folders, files and links; optionally my notes, files I made, the master summary, deadlines.
-  // Never included: assignment status, drafts, grades, feedback, submissions, reminders, unclear points, today list, activity, project ideas.
+  // Included: course name, credits, lecturer, colour, icon, topics, lessons, folders, files and links; optionally my notes, files I made, deadlines.
+  // Never included: assignment status, drafts, grades, feedback, submissions, reminders, activity, project ideas.
+  // Files from older versions may also carry summaries and other course fields: import ignores them.
   const SHARE_FORMAT = 1;
   const pick = (row, keys) => Object.fromEntries(keys.map(k => [k, row[k] ?? null]));
   function shareExport(cid, o) {
@@ -425,25 +387,22 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
     const topics = live('topics'), tids = new Set(topics.map(t => t.id));
     const inR = (t, a, b) => q(`SELECT * FROM ${t}`).filter(x => rids.has(x[a]) && (b === 'topic' ? tids.has(x.topic_id) : rids.has(x[b])));
     const data = {
-      course: { ...pick(c, ['name', 'code', 'credits', 'lecturer', 'lecturer_contact', 'office_hours', 'grading', 'info_md', 'color', 'icon']), syllabus: rids.has(c.syllabus_resource_id) ? c.syllabus_resource_id : null },
+      course: { ...pick(c, ['name', 'credits', 'lecturer', 'color', 'icon']), syllabus: rids.has(c.syllabus_resource_id) ? c.syllabus_resource_id : null },
       folders: live('folders').map(f => pick(f, ['id', 'parent_id', 'name', 'sort'])),
       topics: topics.map(t => pick(t, ['id', 'name', 'description', 'sort'])),
       lessons: live('lessons').map(l => ({ ...pick(l, ['id', 'title', 'date', 'kind', 'sort']), notes_md: o.notes ? l.notes_md : '' })),
       resources: resources.map(r => ({ ...pick(r, ['id', 'folder_id', 'lesson_id', 'title', 'kind', 'role', 'source', 'url', 'blob_sha', 'original_name', 'tags', 'sort']), body: r.kind === 'note' ? r.body : null, notes: o.notes ? r.notes : '' })),
       resource_topics: inR('resource_topics', 'resource_id', 'topic'),
       resource_relations: inR('resource_relations', 'resource_id', 'related_id'),
-      chapters: o.summary ? live('summary_chapters').map(s => pick(s, ['id', 'topic_id', 'folder_id', 'title', 'body_md', 'sort'])) : [],
-      summary_folders: o.summary ? live('summary_folders').map(f => pick(f, ['id', 'parent_id', 'name', 'sort'])) : [],
       assignments: o.deadlines ? live('assignments').map(a => pick(a, ['id', 'title', 'instructions_md', 'due_date', 'due_time'])) : [],
       exams: o.deadlines ? live('exams').map(e => pick(e, ['id', 'title', 'date', 'time', 'location'])) : [],
     };
-    const chIds = new Set(data.chapters.map(x => x.id)), aIds = new Set(data.assignments.map(x => x.id)), eIds = new Set(data.exams.map(x => x.id));
-    data.summary_sources = q('SELECT * FROM summary_sources').filter(x => chIds.has(x.chapter_id) && rids.has(x.resource_id));
+    const aIds = new Set(data.assignments.map(x => x.id)), eIds = new Set(data.exams.map(x => x.id));
     data.assignment_topics = q('SELECT * FROM assignment_topics').filter(x => aIds.has(x.assignment_id) && tids.has(x.topic_id));
     data.assignment_resources = q("SELECT * FROM assignment_resources WHERE role IN ('instructions','attachment')").filter(x => aIds.has(x.assignment_id) && rids.has(x.resource_id));
     data.exam_topics = q('SELECT * FROM exam_topics').filter(x => eIds.has(x.exam_id) && tids.has(x.topic_id));
     const shas = [...new Set(resources.map(r => r.blob_sha).filter(Boolean))];
-    const counts = { topics: data.topics.length, lessons: data.lessons.length, files: shas.length, resources: resources.length, notes: resources.filter(r => r.kind === 'note').length, chapters: data.chapters.length, assignments: data.assignments.length, exams: data.exams.length };
+    const counts = { topics: data.topics.length, lessons: data.lessons.length, files: shas.length, resources: resources.length, notes: resources.filter(r => r.kind === 'note').length, assignments: data.assignments.length, exams: data.exams.length };
     const manifest = { app: 'ijos', kind: 'course', format: SHARE_FORMAT, app_version: APP_VERSION, exported_at: now(), course: c.name, counts };
     const file = path.join(dirs.tmp, `share-${crypto.randomUUID()}.zip`);
     writeZip(file, [{ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2)) }, { name: 'course.json', data: Buffer.from(JSON.stringify(data)) }, ...shas.map(s => ({ name: `blobs/${s}`, file: blobPath(s) }))]);
@@ -501,9 +460,9 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       const course = tx(() => {
         for (const s of shas) run('INSERT OR IGNORE INTO blobs (sha, size, created_at) VALUES (?,?,?)', s, fs.statSync(blobPath(s)).size, now());
         const c = d.course;
-        const cid = insert('courses', { semester_id: sem.id, name: str(name || c.name).slice(0, 200), code: str(c.code), credits: Number.isFinite(c.credits) ? c.credits : null, lecturer: str(c.lecturer), lecturer_contact: str(c.lecturer_contact), office_hours: str(c.office_hours),
-          grading: typeof c.grading === 'string' ? c.grading : '[]', info_md: str(c.info_md), color: /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '', icon: str(c.icon).slice(0, 4), sort: one('SELECT COUNT(*) n FROM courses WHERE semester_id=?', sem.id).n + 1 }).id;
-        const map = { f: {}, t: {}, l: {}, r: {}, ch: {}, a: {}, e: {} };
+        const cid = insert('courses', { semester_id: sem.id, name: str(name || c.name).slice(0, 200), credits: Number.isFinite(c.credits) ? c.credits : null, lecturer: str(c.lecturer),
+          color: /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '', icon: str(c.icon).slice(0, 4), sort: one('SELECT COUNT(*) n FROM courses WHERE semester_id=?', sem.id).n + 1 }).id;
+        const map = { f: {}, t: {}, l: {}, r: {}, a: {}, e: {} };
         const list = k => Array.isArray(d[k]) ? d[k] : [];
         for (const t of list('topics')) map.t[t.id] = insert('topics', { course_id: cid, name: str(t.name) || 'נושא', description: str(t.description), sort: Number(t.sort) || 0 }).id;
         for (const l of list('lessons')) map.l[l.id] = insert('lessons', { course_id: cid, title: str(l.title), date: l.date ? str(l.date) : null, kind: str(l.kind) || 'lecture', notes_md: str(l.notes_md), sort: Number(l.sort) || 0 }).id;
@@ -524,13 +483,6 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         const link = (t, a, b) => { for (const x of list(t)) if (a[1][x[a[0]]] && b[1][x[b[0]]]) run(`INSERT OR IGNORE INTO ${t} (${a[0]}, ${b[0]}) VALUES (?,?)`, a[1][x[a[0]]], b[1][x[b[0]]]); };
         link('resource_topics', ['resource_id', map.r], ['topic_id', map.t]);
         link('resource_relations', ['resource_id', map.r], ['related_id', map.r]);
-        map.sf = {};
-        const sfs = list('summary_folders');
-        for (const f of sfs) map.sf[f.id] = insert('summary_folders', { course_id: cid, name: str(f.name) || 'תיקייה', sort: Number(f.sort) || 0 }).id;
-        for (const f of sfs) if (map.sf[f.parent_id]) run('UPDATE summary_folders SET parent_id=? WHERE id=?', map.sf[f.parent_id], map.sf[f.id]);
-        breakCycles('summary_folders', cid);
-        for (const s of list('chapters')) map.ch[s.id] = insert('summary_chapters', { course_id: cid, topic_id: map.t[s.topic_id] || null, folder_id: map.sf[s.folder_id] || null, title: str(s.title) || 'סיכום', body_md: str(s.body_md), sort: Number(s.sort) || 0 }).id;
-        link('summary_sources', ['chapter_id', map.ch], ['resource_id', map.r]);
         for (const a of list('assignments')) map.a[a.id] = insert('assignments', { course_id: cid, title: str(a.title) || 'מטלה', instructions_md: str(a.instructions_md), due_date: a.due_date ? str(a.due_date) : null, due_time: a.due_time ? str(a.due_time) : null, status: 'not_started' }).id;
         link('assignment_topics', ['assignment_id', map.a], ['topic_id', map.t]);
         for (const x of list('assignment_resources')) if (map.a[x.assignment_id] && map.r[x.resource_id]) run('INSERT OR IGNORE INTO assignment_resources (assignment_id, resource_id, role) VALUES (?,?,?)', map.a[x.assignment_id], map.r[x.resource_id], x.role === 'instructions' ? 'instructions' : 'attachment');
@@ -550,9 +502,10 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       const S = { sample: 1 };
       const year = insert('years', { ...S, name: 'שנת דוגמה' });
       const sem = insert('semesters', { ...S, year_id: year.id, name: 'סמסטר דוגמה', status: 'active', notes: 'נתוני דוגמה סינתטיים להתנסות. אפשר למחוק הכול בלחיצה אחת בהגדרות.' });
-      const c1 = insert('courses', { ...S, semester_id: sem.id, name: 'דוגמה: מבוא לבסיסי נתונים', credits: 4, color: '#e2562f', icon: '🗄️', info_md: 'קורס **דוגמה** בלבד. כל השמות, התאריכים והתכנים כאן מומצאים.' });
-      const c2 = insert('courses', { ...S, semester_id: sem.id, name: 'דוגמה: סטטיסטיקה למתחילים', credits: 3, color: '#2f7de2', icon: '📊', info_md: 'קורס **דוגמה** בלבד.' });
-      const t1 = insert('topics', { course_id: c1.id, name: 'ישויות וקשרים' }), t2 = insert('topics', { course_id: c1.id, name: 'נרמול' });
+      const c1 = insert('courses', { ...S, semester_id: sem.id, name: 'דוגמה: מבוא לבסיסי נתונים', credits: 4, color: '#e2562f', icon: '🗄️' });
+      const c2 = insert('courses', { ...S, semester_id: sem.id, name: 'דוגמה: סטטיסטיקה למתחילים', credits: 3, color: '#2f7de2', icon: '📊' });
+      const t1 = insert('topics', { course_id: c1.id, name: 'ישויות וקשרים' });
+      insert('topics', { course_id: c1.id, name: 'נרמול' });
       insert('topics', { course_id: c2.id, name: 'ממוצע וחציון' });
       const l1 = insert('lessons', { course_id: c1.id, date: addDaysIso(-7), title: 'שיעור 1: מה זה מודל נתונים' });
       const note = insert('resources', { title: 'פתק דוגמה: קשר אחד-לרבים', kind: 'note', role: 'summary', source: 'me', course_id: c1.id, lesson_id: l1.id,
@@ -563,9 +516,6 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       run('INSERT INTO assignment_topics (assignment_id, topic_id) VALUES (?,?)', a.id, t1.id);
       for (const [i, text] of ['לקרוא את הפתק', 'לשרטט ישויות', 'לבדוק נרמול'].entries()) insert('checklist', { owner_type: 'assignment', owner_id: a.id, text, done: i === 0 ? 1 : 0, sort: i });
       insert('exams', { course_id: c1.id, title: 'דוגמה: בוחן אמצע', date: addDaysIso(20), time: '10:00', location: 'אולם דוגמה' });
-      const sf = insert('summary_folders', { course_id: c1.id, name: 'לקראת הבוחן' });
-      insert('summary_chapters', { course_id: c1.id, folder_id: sf.id, topic_id: t2.id, title: 'נרמול בקצרה', sort: 1, body_md: '### הגדרות\n- **נרמול** — פיצול טבלאות כדי שכל עובדה תישמר פעם אחת.\n\n### דוגמה\nפרטי לקוח שחוזרים בכל הזמנה עוברים לטבלת `customers`, וההזמנה שומרת רק `customer_id`.' });
-      insert('summary_chapters', { course_id: c1.id, topic_id: t1.id, title: 'ישויות וקשרים', sort: 2, body_md: 'ישות = דבר שרוצים לשמור עליו מידע (לקוח, הזמנה).\n\nקשר אחד-לרבים: לקוח אחד, הרבה הזמנות.' });
       return { ok: true, semester_id: sem.id };
     });
   }
@@ -626,8 +576,6 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
         return getRow('resources', r.id);
       });
     }],
-    ['POST', /^\/api\/summary\/(\d+)\/snapshot$/, (m, b) => snapshotSummary(+m[1], b.reason || 'שמירה ידנית')],
-    ['POST', /^\/api\/summary-versions\/(\d+)\/restore$/, (m) => restoreSummary(+m[1])],
     ['POST', /^\/api\/backup$/, () => backup()],
     ['GET', /^\/api\/backups$/, () => fs.readdirSync(dirs.backups).filter(f => /\.(zip|db)$/.test(f)).map(f => ({ name: f, size: fs.statSync(path.join(dirs.backups, f)).size })).sort((a, b) => b.name.localeCompare(a.name))
       .concat(fs.readdirSync(dirs.auto).filter(f => f.endsWith('.db')).sort().reverse().map(f => ({ name: 'auto/' + f, size: fs.statSync(path.join(dirs.auto, f)).size })))],
@@ -657,7 +605,7 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
       if (site && !['same-origin', 'none'].includes(site) && /^\/(api|files)\//.test(url.pathname)) return send(res, 403, { error: 'cross-site request blocked' });
       let m;
       if ((req.method === 'GET' || req.method === 'HEAD') && (m = /^\/files\/(\d+)$/.exec(url.pathname))) return serveFile(res, +m[1], p);
-      if (req.method === 'GET' && (m = /^\/api\/download\/(resource|summary|brief|notes|backup|share)(?:\/(.+))?$/.exec(url.pathname))) return download(res, m[1], m[2], p);
+      if (req.method === 'GET' && (m = /^\/api\/download\/(resource|brief|notes|backup|share)(?:\/(.+))?$/.exec(url.pathname))) return download(res, m[1], m[2], p);
       for (const [method, re, fn, raw] of routes) {
         if (req.method !== method || !(m = re.exec(url.pathname))) continue;
         if (raw) return send(res, 200, await raw(req, p));
@@ -676,10 +624,9 @@ export function createApp({ dataDir, port, maxUploadMb = 1024 }) {
   function download(res, kind, arg, p) {
     let name, data, file;
     if (kind === 'resource') { const r = getRow('resources', +arg); name = `${mdName(r.title)}.md`; data = `# ${r.title}\n\n${r.body || ''}`; }
-    else if (kind === 'summary') { name = `${mdName(getRow('courses', +arg).name)} - סיכום מרכזי.md`; data = summaryMd(+arg); }
     else if (kind === 'brief') { const a = getRow('applications', +arg); name = `implementation-brief-${mdName(a.title)}.md`; data = briefMd(a); }
     else if (kind === 'notes') { file = exportAllMd(); name = path.basename(file); }
-    else if (kind === 'share') ({ file, name } = shareExport(+arg, { notes: p.get('notes') === '1', mine: p.get('mine') === '1', summary: p.get('summary') === '1', deadlines: p.get('deadlines') === '1' }));
+    else if (kind === 'share') ({ file, name } = shareExport(+arg, { notes: p.get('notes') === '1', mine: p.get('mine') === '1', deadlines: p.get('deadlines') === '1' }));
     else if (kind === 'backup') { const n = decodeURIComponent(arg || ''); file = n.startsWith('auto/') ? path.join(dirs.auto, path.basename(n)) : path.join(dirs.backups, path.basename(n)); name = path.basename(file); if (!fs.existsSync(file)) throw httpErr(404, 'not found'); }
     const headers = { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`, 'Cache-Control': 'no-store' };
     if (file) { res.writeHead(200, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': fs.statSync(file).size }); const s = fs.createReadStream(file); s.pipe(res); if (kind === 'notes' || kind === 'share') s.on('close', () => fs.rmSync(file, { force: true })); }

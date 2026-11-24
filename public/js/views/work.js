@@ -1,7 +1,7 @@
-// Assignments, exams, calendar and task lists.
-import { html, raw, str, api, dialog, toast, options, STATUS, STATUS_ORDER, KIND_ICON } from '../util.js';
+// Assignments, exams, calendar and the assignments list.
+import { html, raw, str, api, dialog, toast, STATUS, STATUS_ORDER } from '../util.js';
 import { md } from '../md.js';
-import { S, T, byId, courses, courseName, topicsOf, create, patch, link, unlink, autosave, nextAction, syncReminders, touch, activityOf } from '../store.js';
+import { S, T, byId, courses, courseName, patch, link, unlink, autosave, nextAction, syncReminders, touch } from '../store.js';
 import { bind, refresh, empty, statusPill, dueLabel, courseCrumbs, fieldHandlers, checklistSection, checklistHandlers, remindersSection, reminderHandlers, pickResources, pickTopics, setLinks, courseOptions, importFiles, resourceRow } from '../ui.js';
 import { today, nowStamp, fmtDateTime, fmtStamp, isOverdue, addDays, relDay, dueStamp } from '../time.js';
 import { newAssignment, newExam } from './course.js';
@@ -175,10 +175,6 @@ function events(courseFilter) {
     if (a.planned_date && open) ev.push({ date: a.planned_date, time: a.planned_time, cls: 'ev-planned', label: `עבודה על: ${a.title}`, href: `#/a/${a.id}`, course: a.course_id, open, kind: 'זמן עבודה מתוכנן' });
   }
   for (const e of T('exams').filter(ok)) if (e.date) ev.push({ date: e.date, time: e.time, cls: 'ev-exam', label: `מבחן: ${e.title}`, href: `#/exam/${e.id}`, course: e.course_id, open: true, kind: 'מבחן' });
-  for (const t of T('tasks').filter(ok)) {
-    if (t.due_date) ev.push({ date: t.due_date, time: t.due_time, cls: t.done ? 'ev-done' : 'ev-task', label: t.title, href: '#/tasks', course: t.course_id, open: !t.done, kind: 'משימה' });
-    if (t.planned_date && !t.done) ev.push({ date: t.planned_date, time: t.planned_time, cls: 'ev-planned', label: `לעבוד על: ${t.title}`, href: '#/tasks', course: t.course_id, open: true, kind: 'זמן עבודה מתוכנן' });
-  }
   return ev.sort((a, b) => (a.date + (a.time || '99')).localeCompare(b.date + (b.time || '99')));
 }
 export function calendar(root, _, query) {
@@ -208,7 +204,7 @@ export function calendar(root, _, query) {
     <div class="toolbar cal-tools">
       <div class="seg" role="group" aria-label="תצוגה"><a class="seg-item ${view === 'month' ? 'on' : ''}" href="${q({ view: 'month' })}">חודש</a><a class="seg-item ${view === 'list' ? 'on' : ''}" href="${q({ view: 'list' })}">רשימה</a></div>
       <label>קורס <select data-change="course"><option value="">כל הקורסים</option>${courses().map(c => html`<option value="${c.id}" ${c.id === cf ? raw('selected') : ''}>${c.name}</option>`)}</select></label>
-      <span class="legend small"><span class="ev-due">הגשה רשמית</span><span class="ev-planned">זמן עבודה מתוכנן</span><span class="ev-exam">מבחן</span><span class="ev-task">משימה</span></span></div>
+      <span class="legend small"><span class="ev-due">הגשה רשמית</span><span class="ev-planned">זמן עבודה מתוכנן</span><span class="ev-exam">מבחן</span></span></div>
     ${view === 'month' ? html`<div class="cal-nav"><a class="btn btn-sm" href="${q({ m: prev })}" aria-label="החודש הקודם">→ הקודם</a><h2>${monthName}</h2><a class="btn btn-sm" href="${q({ m: next })}" aria-label="החודש הבא">הבא ←</a>${month !== t.slice(0, 7) ? html`<a class="btn-link small" href="${q({ m: t.slice(0, 7) })}">היום</a>` : ''}</div>
       <div class="cal" role="grid" aria-label="${monthName}"><div class="cal-row cal-head" role="row">${['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'].map(d => html`<div role="columnheader">${d}</div>`)}</div>
         ${Array.from({ length: cells.length / 7 }, (_, w) => html`<div class="cal-row" role="row">${cells.slice(w * 7, w * 7 + 7).map(d => html`<div role="gridcell" class="cal-cell ${d === t ? 'today' : ''} ${d ? '' : 'pad'}" ${d === t ? raw('aria-current="date"') : ''}>${d ? html`<span class="cal-day">${Number(d.slice(8))}</span><ul class="evs">${ev.filter(e => e.date === d).map(evRow)}</ul>` : ''}</div>`)}</div>`)}
@@ -224,42 +220,15 @@ export function calendar(root, _, query) {
   });
 }
 
-// ---------------- tasks & assignments list ----------------
+// ---------------- assignments list (route #/tasks kept for old bookmarks) ----------------
 export function tasks(root, _, query) {
   const showDone = query.get('done') === '1';
   const asg = T('assignments').sort((a, b) => (dueStamp(a.due_date, a.due_time) || '9999').localeCompare(dueStamp(b.due_date, b.due_time) || '9999'));
   const groups = STATUS_ORDER.filter(s => showDone || !['submitted', 'graded'].includes(s)).map(s => [s, asg.filter(a => a.status === s)]).filter(([, l]) => l.length);
-  const tk = T('tasks').filter(t => showDone || !t.done).sort((a, b) => a.done - b.done || (dueStamp(a.due_date, a.due_time) || '9999').localeCompare(dueStamp(b.due_date, b.due_time) || '9999'));
-  root.innerHTML = str(html`<div class="page"><header class="page-head"><div><h1>משימות ומטלות</h1><p class="muted">מטלות לפי סטטוס ומשימות קטנות (כולל משימות חזרה)</p></div>
+  root.innerHTML = str(html`<div class="page"><header class="page-head"><div><h1>מטלות</h1><p class="muted">כל המטלות מכל הקורסים, לפי סטטוס</p></div>
     <div class="actions"><button class="btn btn-primary" data-act="new-asg">+ מטלה</button><a class="btn" href="#/tasks${showDone ? '' : '?done=1'}">${showDone ? 'הסתרת שהושלמו' : 'הצגת שהושלמו'}</a></div></header>
-    <section class="card"><h2 class="card-title">מטלות</h2>${groups.length ? groups.map(([s, list]) => html`<h3 class="sub">${STATUS[s]} (${list.length})</h3><ul class="items">${list.map(a => html`<li class="item"><div class="item-main"><a href="#/a/${a.id}" dir="auto">${a.title}</a> ${statusPill(a.status)}
+    <section class="card">${groups.length ? groups.map(([s, list]) => html`<h3 class="sub">${STATUS[s]} (${list.length})</h3><ul class="items">${list.map(a => html`<li class="item"><div class="item-main"><a href="#/a/${a.id}" dir="auto">${a.title}</a> ${statusPill(a.status)}
       <div class="item-meta"><bdi>${courseName(a.course_id)}</bdi> · הגשה: ${dueLabel(a.due_date, a.due_time)}${a.planned_date ? html` · <span class="planned">מתוכנן: ${fmtDateTime(a.planned_date, a.planned_time)}</span>` : ''}</div>
-      ${nextAction(a) && !['submitted', 'graded'].includes(a.status) ? html`<div class="next-action"><strong>הבא:</strong> <span dir="auto">${nextAction(a)}</span></div>` : ''}</div></li>`)}</ul>`) : empty('אין מטלות פתוחות.')}</section>
-    <section class="card"><h2 class="card-title">משימות</h2>
-      <form class="inline-form wrap" data-submit="add"><label class="grow">משימה<input name="title" dir="auto" required placeholder="למשל: לשלוח מייל למתרגל"></label><label>קורס<select name="course_id">${courseOptions('', { none: '—' })}</select></label><label>תאריך יעד<input type="date" name="due_date"></label><button class="btn btn-sm">הוספה</button></form>
-      ${tk.length ? html`<ul class="items">${tk.map(t => html`<li class="item ${t.done ? 'archived' : ''}"><label class="check"><input type="checkbox" data-change="done" data-id="${t.id}" ${t.done ? raw('checked') : ''}> <span class="sr-only">בוצע</span></label>
-        <div class="item-main"><span dir="auto" class="${t.done ? 'done' : ''}">${t.title}</span>${t.origin === 'unclear' ? html` <span class="pill">חזרה</span>` : ''}
-        <div class="item-meta">${t.course_id ? html`<bdi>${courseName(t.course_id)}</bdi> · ` : ''}${dueLabel(t.due_date, t.due_time)}${t.planned_date ? html` · <span class="planned">מתוכנן: ${fmtDateTime(t.planned_date, t.planned_time)}</span>` : ''}${isOverdue(t.due_date, t.due_time) && !t.done ? html` <span class="pill pill-danger">באיחור</span>` : ''}</div>
-        ${t.notes ? html`<div class="small muted" dir="auto">${linkify(t.notes)}</div>` : ''}</div>
-        <span class="row-tools"><button class="btn-link small" data-act="edit" data-id="${t.id}">עריכה</button><button class="btn-link small" data-act="rem" data-id="${t.id}">תזכורת</button><button class="btn-link small danger" data-act="trash" data-table="tasks" data-id="${t.id}" data-label="${t.title}">מחיקה</button></span></li>`)}</ul>` : empty('אין משימות פתוחות.')}</section></div>`);
-  bind(root, {
-    ...fieldHandlers, ...reminderHandlers,
-    'new-asg': () => newAssignment(null),
-    add: async (f, d) => { await create('tasks', { title: d.title.trim(), course_id: d.course_id ? +d.course_id : null, due_date: d.due_date || null }); await refresh(); },
-    done: async el => { await patch('tasks', el.dataset.id, { done: el.checked, done_at: el.checked ? new Date().toISOString() : null }); await refresh(); },
-    rem: el => reminderHandlers['rem-add']({ dataset: { type: 'task', id: el.dataset.id } }),
-    edit: async el => {
-      const t = byId('tasks', el.dataset.id);
-      const v = await dialog('עריכת משימה', html`<label>משימה<input name="title" value="${t.title}" dir="auto" required></label><label>קורס<select name="course_id">${courseOptions(t.course_id, { none: '—' })}</select></label>
-        <fieldset class="dates"><legend>מועד יעד רשמי</legend><div class="form-grid"><label>תאריך<input type="date" name="due_date" value="${t.due_date || ''}"></label><label>שעה<input type="time" name="due_time" value="${t.due_time || ''}"></label></div></fieldset>
-        <fieldset class="dates planned"><legend>מתי אעבוד על זה</legend><div class="form-grid"><label>תאריך<input type="date" name="planned_date" value="${t.planned_date || ''}"></label><label>שעה<input type="time" name="planned_time" value="${t.planned_time || ''}"></label></div></fieldset>
-        <label>הערות<textarea name="notes" rows="3" dir="auto">${t.notes}</textarea></label>`);
-      if (!v) return;
-      const n = x => x || null;
-      await patch('tasks', t.id, { title: v.title, course_id: v.course_id ? +v.course_id : null, due_date: n(v.due_date), due_time: n(v.due_time), planned_date: n(v.planned_date), planned_time: n(v.planned_time), notes: v.notes });
-      byId('tasks', t.id).due_date = n(v.due_date); byId('tasks', t.id).due_time = n(v.due_time);
-      await syncReminders('task', t.id); await refresh();
-    },
-  });
+      ${nextAction(a) && !['submitted', 'graded'].includes(a.status) ? html`<div class="next-action"><strong>הבא:</strong> <span dir="auto">${nextAction(a)}</span></div>` : ''}</div></li>`)}</ul>`) : empty('אין מטלות פתוחות.')}</section></div>`);
+  bind(root, { 'new-asg': () => newAssignment(null) });
 }
-const linkify = text => text.split(/(#\/r\/\d+)/).map(p => /^#\/r\/\d+$/.test(p) ? html`<a href="${p}">פתיחת החומר</a>` : p);

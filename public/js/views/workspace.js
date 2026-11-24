@@ -1,4 +1,4 @@
-// Study workspace: a resource (file/note/link) beside notes, another material, unclear points or details.
+// Study workspace: a resource (file/note/link) beside notes, another material or details.
 import { html, raw, str, api, dialog, toast, options, parseTags, KIND, KIND_ICON, ROLE, SOURCE, sourceBadge } from '../util.js';
 import { md } from '../md.js';
 import { T, byId, create, patch, link, unlink, full, related, resTopics, activityOf, touch, autosave } from '../store.js';
@@ -12,7 +12,7 @@ const TEXT_STATUS = {
   failed: 'לא הצלחנו לקרוא את תוכן הקובץ לחיפוש. החיפוש מוצא אותו לפי כותרת, תגיות והערות בלבד.',
   none: '',
 };
-const PANELS = [['notes', 'הערות שלי'], ['side', 'חומר נוסף לצד'], ['unclear', 'לא ברור'], ['details', 'פרטים']];
+const PANELS = [['notes', 'הערות שלי'], ['side', 'חומר נוסף לצד'], ['details', 'פרטים']];
 
 export async function workspace(root, [id], query) {
   const meta = byId('resources', id);
@@ -26,8 +26,6 @@ export async function workspace(root, [id], query) {
   const panel = query.get('panel') || (r.kind === 'note' ? (sources.length ? 'side' : 'details') : 'notes');
   const sideId = Number(query.get('with')) || (r.kind === 'note' ? sources[0]?.id : notes[0]?.id) || null;
   const layout = localStorage.getItem('ws-layout') || 'split';
-  const flags = T('flags').filter(f => f.resource_id === r.id);
-  const openFlags = flags.filter(f => f.status === 'open');
 
   root.innerHTML = str(html`<div class="page page-wide">
     ${courseCrumbs(r.course_id, r.lesson_id && byId('lessons', r.lesson_id) ? [[lessonLabel(byId('lessons', r.lesson_id)), `#/lesson/${r.lesson_id}`], [r.title]] : [[r.title]])}
@@ -51,8 +49,8 @@ export async function workspace(root, [id], query) {
       <section class="pane pane-main" aria-label="החומר">${viewerShell(r)}</section>
       <div class="divider" role="separator" tabindex="0" aria-orientation="vertical" aria-label="שינוי רוחב החלוניות (חיצים)" aria-valuenow="${localStorage.getItem('ws-split') || '55'}" aria-valuemin="25" aria-valuemax="75"></div>
       <section class="pane pane-side" aria-label="חלונית צד">
-        <nav class="tabs tabs-sm" role="tablist">${PANELS.map(([k, l]) => html`<a role="tab" href="${panelHref(r.id, k, sideId)}" aria-selected="${k === panel}" ${k === panel ? raw('aria-current="page"') : ''}>${l}${k === 'unclear' && openFlags.length ? html` <span class="count">${openFlags.length}</span>` : ''}${k === 'notes' && notes.length ? html` <span class="count">${notes.length}</span>` : ''}</a>`)}</nav>
-        <div class="pane-body" id="side-body">${sidePanel(panel, r, { notes, sources, sideId, flags })}</div>
+        <nav class="tabs tabs-sm" role="tablist">${PANELS.map(([k, l]) => html`<a role="tab" href="${panelHref(r.id, k, sideId)}" aria-selected="${k === panel}" ${k === panel ? raw('aria-current="page"') : ''}>${l}${k === 'notes' && notes.length ? html` <span class="count">${notes.length}</span>` : ''}</a>`)}</nav>
+        <div class="pane-body" id="side-body">${sidePanel(panel, r, { notes, sources, sideId })}</div>
       </section>
     </div></div>`);
 
@@ -129,7 +127,7 @@ function restoreScroll(box, act, rid) {
   sc.onscroll = () => { clearTimeout(t); t = setTimeout(() => { const max = sc.scrollHeight - sc.clientHeight; if (max > 0) touch('resource', rid, { scroll: +(sc.scrollTop / max).toFixed(3) }).catch(() => {}); }, 800); };
 }
 
-// Note editor: Markdown with live preview, autosave, quick inserts, unclear marking.
+// Note editor: Markdown with live preview, autosave, quick inserts.
 function mountNote(box, r, { editable, compact }) {
   const startEdit = editable && (!r.body || location.hash.includes('edit=1'));
   const mode = startEdit ? (compact ? 'edit' : localStorage.getItem('note-mode') || 'both') : 'view';
@@ -137,7 +135,6 @@ function mountNote(box, r, { editable, compact }) {
     ${editable ? html`<div class="note-tools" role="toolbar" aria-label="עריכת פתק">
       <div class="seg seg-sm">${[['view', 'קריאה'], ['edit', 'עריכה'], ...(compact ? [] : [['both', 'עריכה + תצוגה']])].map(([k, l]) => html`<button type="button" class="seg-item ${mode === k ? 'on' : ''}" data-note-mode="${k}" aria-pressed="${mode === k}">${l}</button>`)}</div>
       <span class="tool-group">${[['**', '**', 'B', 'מודגש'], ['\n## ', '', 'H', 'כותרת'], ['\n- ', '', '•', 'רשימה'], ['`', '`', '</>', 'קוד בשורה'], ['\n```js\n', '\n```\n', '{ }', 'בלוק קוד'], ['$', '$', '∑', 'נוסחה'], ['\n$$\n', '\n$$\n', '∫', 'נוסחה בשורה נפרדת']].map(([a, b, l, t]) => html`<button type="button" class="tool" data-ins-a="${a}" data-ins-b="${b}" title="${t}" aria-label="${t}">${l}</button>`)}</span>
-      <button type="button" class="btn btn-sm" data-note-act="unclear" title="יוצר נקודה 'לא ברור' מהטקסט המסומן">סימון כלא ברור</button>
       ${compact ? html`<a class="btn btn-sm" href="#/r/${r.id}">פתיחה מלאה</a>` : ''}
     </div>` : ''}
     <div class="note-body"><textarea class="note-input md-input" dir="auto" aria-label="תוכן הפתק (Markdown)" placeholder="כתבו כאן… נתמך Markdown: ## כותרת, - רשימה, \`קוד\`, $x^2$ לנוסחאות">${r.body || ''}</textarea>
@@ -156,20 +153,16 @@ function mountNote(box, r, { editable, compact }) {
   let pt;
   ta.addEventListener('input', () => { saver.set(ta.value); clearTimeout(pt); pt = setTimeout(() => { pv.innerHTML = md(ta.value); }, 200); });
   ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saver.flush(); } });
-  box.addEventListener('click', async e => {
+  box.addEventListener('click', e => {
     const m = e.target.closest('[data-note-mode]');
     if (m) { const k = m.dataset.noteMode; note.className = `note mode-${k}`; box.querySelectorAll('[data-note-mode]').forEach(b => { b.classList.toggle('on', b === m); b.setAttribute('aria-pressed', b === m); }); if (k !== 'view') { if (!compact) localStorage.setItem('note-mode', k); ta.focus(); } pv.innerHTML = md(ta.value); return; }
     const ins = e.target.closest('[data-ins-a]');
-    if (ins) { const { insA: a, insB: b } = ins.dataset; const s = ta.selectionStart, en = ta.selectionEnd; ta.setRangeText(a + ta.value.slice(s, en) + b, s, en, 'end'); if (s === en) ta.selectionStart = ta.selectionEnd = s + a.length; ta.focus(); ta.dispatchEvent(new Event('input')); return; }
-    if (e.target.closest('[data-note-act="unclear"]')) {
-      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd).trim() || window.getSelection()?.toString().trim() || '';
-      await addFlag(r, sel);
-    }
+    if (ins) { const { insA: a, insB: b } = ins.dataset; const s = ta.selectionStart, en = ta.selectionEnd; ta.setRangeText(a + ta.value.slice(s, en) + b, s, en, 'end'); if (s === en) ta.selectionStart = ta.selectionEnd = s + a.length; ta.focus(); ta.dispatchEvent(new Event('input')); }
   });
 }
 
 // ---------------- side panel ----------------
-function sidePanel(panel, r, { notes, sources, sideId, flags }) {
+function sidePanel(panel, r, { notes, sources, sideId }) {
   if (panel === 'notes') {
     if (r.kind === 'note') return html`<p class="muted small">זה פתק. מקורות מקושרים מוצגים בלשונית "חומר נוסף לצד".</p>`;
     return html`<div class="side-head"><button class="btn btn-sm btn-primary" data-act="new-note">+ פתק חדש על החומר</button><button class="btn btn-sm" data-act="link-note">קישור פתק קיים</button></div>
@@ -184,13 +177,6 @@ function sidePanel(panel, r, { notes, sources, sideId, flags }) {
       ${[...sources, ...notes].length ? html`<optgroup label="מקושרים">${[...sources, ...notes].map(x => html`<option value="${x.id}" ${x.id === sideId ? raw('selected') : ''}>${x.title}</option>`)}</optgroup>` : ''}
       <optgroup label="עוד בקורס">${course.filter(x => !relIds.has(x.id)).map(x => html`<option value="${x.id}" ${x.id === sideId ? raw('selected') : ''}>${KIND_ICON[x.kind]} ${x.title}</option>`)}</optgroup></select></label>
       ${sideId ? html`<p class="small"><a href="#/r/${sideId}">פתיחה כחומר ראשי</a>${!relIds.has(sideId) ? html` · <button class="btn-link small" data-act="relate" data-id="${sideId}">קישור קבוע בין החומרים</button>` : ''}</p><div id="side-viewer" class="viewer"><p class="loading">טוען…</p></div>` : html`<p class="muted small">למשל: מצגת המרצה לצד הסיכום שלכם.</p>`}`;
-  }
-  if (panel === 'unclear') {
-    return html`<div class="side-head"><button class="btn btn-sm btn-primary" data-act="add-flag">+ נקודה לא ברורה</button></div>
-      ${flags.length ? html`<ul class="items">${flags.sort((a, b) => (a.status > b.status ? 1 : -1)).map(f => html`<li class="item ${f.status === 'resolved' ? 'archived' : ''}"><div class="item-main"><span dir="auto">${f.text}</span>
-        <div class="item-meta">${f.location ? html`מיקום: <bdi>${f.location}</bdi> · ` : ''}${f.status === 'open' ? 'פתוח' : 'הובהר'}${f.task_id ? ' · יש משימת חזרה' : ''}</div></div>
-        <span class="row-tools">${f.status === 'open' && !f.task_id ? html`<button class="btn btn-sm" data-act="flag-task" data-id="${f.id}">למשימת חזרה</button>` : ''}<button class="btn btn-sm" data-act="flag-toggle" data-id="${f.id}">${f.status === 'open' ? 'הובהר ✓' : 'פתיחה מחדש'}</button></span></li>`)}</ul>`
-        : empty('אין נקודות לא ברורות. כשמשהו לא מובן — סמנו אותו כאן, ואפשר להפוך אותו למשימת חזרה.')}`;
   }
   return detailsPanel(r);
 }
@@ -251,22 +237,6 @@ function sideHandlers(r, { notes }) {
     topics: async () => { const ids = await pickTopics(r.course_id, resTopics(r.id).map(t => t.id)); if (ids) { await setLinks('resource_topics', 'resource_id', r.id, 'topic_id', ids); await refresh(); } },
     tags: async el => { const tags = el.value.split(/[,،]/).map(x => x.trim()).filter(Boolean); Object.assign(r, await patch('resources', r.id, { tags })); },
     'html-opt': async el => { await patch('resources', r.id, { [el.name]: el.checked }); await refresh(); },
-    'add-flag': () => addFlag(r, ''),
-    'flag-toggle': async el => {
-      const f = byId('flags', el.dataset.id);
-      const status = f.status === 'open' ? 'resolved' : 'open';
-      await patch('flags', f.id, { status });
-      if (status === 'resolved' && f.task_id && byId('tasks', f.task_id)) await patch('tasks', f.task_id, { done: true, done_at: new Date().toISOString() });
-      await refresh();
-    },
-    'flag-task': async el => {
-      const f = byId('flags', el.dataset.id);
-      const v = await dialog('משימת חזרה', html`<label>משימה<input name="title" value="לחזור על: ${f.text.slice(0, 80)}" dir="auto" required></label><label>תאריך יעד (לא חובה)<input type="date" name="due_date"></label>`, { submit: 'יצירה' });
-      if (!v) return;
-      const t = await create('tasks', { title: v.title, course_id: r.course_id, due_date: v.due_date || null, origin: 'unclear', ref_type: 'flag', ref_id: f.id, notes: `מתוך: ${r.title}${f.location ? ` (${f.location})` : ''}\n#/r/${r.id}` });
-      await patch('flags', f.id, { task_id: t.id });
-      toast('נוצרה משימת חזרה'); await refresh();
-    },
     'new-version': () => {
       const input = document.createElement('input');
       input.type = 'file';
@@ -282,17 +252,6 @@ function sideHandlers(r, { notes }) {
 }
 const refresh0 = () => import('../store.js').then(m => m.reload());
 async function unrelate(a, b) { await unlink('resource_relations', { resource_id: a, related_id: b }); await unlink('resource_relations', { resource_id: b, related_id: a }); }
-
-async function addFlag(r, text) {
-  const v = await dialog('מה לא ברור?', html`<label>הנקודה<textarea name="text" rows="3" dir="auto" required autofocus>${text}</textarea></label>
-    <label>מיקום (לא חובה)<input name="location" dir="auto" placeholder="למשל: עמוד 4, שקף 12, שאלה 3"></label>
-    <label class="check"><input type="checkbox" name="task"> ליצור גם משימת חזרה</label>`, { submit: 'שמירה' });
-  if (!v?.text.trim()) return;
-  const f = await create('flags', { resource_id: r.id, course_id: r.course_id, text: v.text.trim(), location: v.location });
-  if (v.task) { const t = await create('tasks', { title: `לחזור על: ${v.text.trim().slice(0, 80)}`, course_id: r.course_id, origin: 'unclear', ref_type: 'flag', ref_id: f.id, notes: `#/r/${r.id}` }); await patch('flags', f.id, { task_id: t.id }); }
-  toast('הנקודה נשמרה בלשונית "לא ברור"');
-  await refresh();
-}
 
 // Versions list (loaded lazily when <details> opens)
 document.addEventListener('toggle', async e => {

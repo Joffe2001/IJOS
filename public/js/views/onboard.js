@@ -17,7 +17,7 @@ export function welcome(root, _, query) {
 
   if (step === 1) {
     root.innerHTML = str(html`<div class="onboard">${head}<h1>כל התואר. מקום אחד.</h1>
-      <p class="hero-date">חומרים, פתקים, מטלות, מבחנים וסיכומים, מסודרים לפי סמסטר וקורס. בואו נגדיר את ההתחלה. זה לוקח דקה.</p>${stepper}
+      <p class="hero-date">חומרים, פתקים, מטלות ומבחנים, מסודרים לפי סמסטר וקורס. בואו נגדיר את ההתחלה. זה לוקח דקה.</p>${stepper}
       <form class="card" data-submit="create">
         <div class="form-grid one"><label>מה אתם לומדים? (לא חובה)<input name="program" dir="auto" value="${S.data.settings.program || ''}" placeholder="למשל: מדעי המחשב, תואר ראשון"></label></div>
         <div class="form-grid"><label>שנה<input name="year" dir="auto" required value="שנה א׳"></label><label>סמסטר<input name="semester" dir="auto" required value="סמסטר א׳"></label></div>

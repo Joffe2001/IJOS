@@ -5,7 +5,6 @@ import * as home from './views/home.js';
 import * as course from './views/course.js';
 import * as ws from './views/workspace.js';
 import * as work from './views/work.js';
-import * as summary from './views/summary.js';
 import * as sys from './views/system.js';
 import * as onboard from './views/onboard.js';
 
@@ -23,9 +22,6 @@ const routes = [
   [/^\/exam\/(\d+)$/, work.exam],
   [/^\/calendar$/, work.calendar],
   [/^\/tasks$/, work.tasks],
-  [/^\/summary\/(\d+)$/, summary.summary],
-  [/^\/summary\/(\d+)\/versions$/, summary.versions],
-  [/^\/summaries$/, summary.overview],
   [/^\/search$/, sys.search],
   [/^\/trash$/, sys.trash],
   [/^\/settings$/, sys.settings],
@@ -81,12 +77,11 @@ function renderSidebar() {
       <a href="#/" ${active(/^\/$/)}><span class="nav-ico" aria-hidden="true">⌂</span>בית</a>
       <a href="#/inbox" ${active(/^\/inbox/)}><span class="nav-ico" aria-hidden="true">⇣</span>לא ממוין ${inbox ? html`<span class="count">${inbox}</span>` : ''}</a>
       <a href="#/calendar" ${active(/^\/calendar/)}><span class="nav-ico" aria-hidden="true">▦</span>לוח שנה ומועדים</a>
-      <a href="#/tasks" ${active(/^\/tasks/)}><span class="nav-ico" aria-hidden="true">✓</span>משימות ומטלות</a>
-      <a href="#/summaries" ${active(/^\/summar/)}><span class="nav-ico" aria-hidden="true">✎</span>סיכומים</a>
+      <a href="#/tasks" ${active(/^\/tasks/)}><span class="nav-ico" aria-hidden="true">✓</span>מטלות</a>
     </nav>
     ${visible.map(s => html`<section class="nav-sem">
       <h2 class="nav-head"><a href="#/semester/${s.id}" ${active(new RegExp(`^/semester/${s.id}$`))}>${byId('years', s.year_id)?.name} · ${s.name}</a>${s.status !== 'active' ? html` <span class="muted small">(${s.status === 'planned' ? 'עתידי' : 'הסתיים'})</span>` : ''}</h2>
-      <ul class="nav-courses">${courses().filter(c => c.semester_id === s.id).map(c => html`<li><a href="#/course/${c.id}" ${active(new RegExp(`^/(course|summary)/${c.id}(/|$)`))}><span class="dot" style="--c:${c.color || 'var(--accent)'}"></span><bdi>${c.name}</bdi></a></li>`)}</ul>
+      <ul class="nav-courses">${courses().filter(c => c.semester_id === s.id).map(c => html`<li><a href="#/course/${c.id}" ${active(new RegExp(`^/course/${c.id}(/|$)`))}><span class="dot" style="--c:${c.color || 'var(--accent)'}"></span><bdi>${c.name}</bdi></a></li>`)}</ul>
     </section>`)}
     ${sems.length > visible.length || showAll ? html`<button type="button" class="btn-link small" id="toggle-sems">${showAll ? 'הצגת הסמסטר הפעיל בלבד' : `הצגת כל הסמסטרים (${sems.length})`}</button>` : ''}
     ${!sems.length ? html`<a class="nav-add" href="#/welcome">+ הגדרת סמסטר ראשון</a>` : ''}
@@ -131,7 +126,7 @@ async function boot() {
   window.addEventListener('drop', e => {
     if (!hasFiles(e)) return;
     e.preventDefault(); depth = 0; overlay.hidden = true;
-    const m = /^\/(?:course|summary)\/(\d+)/.exec(currentRoute().path);
+    const m = /^\/course\/(\d+)/.exec(currentRoute().path);
     importFiles([...e.dataTransfer.files], { course_id: m ? +m[1] : null });
   });
   // Reminders: checked every 30 s while this tab is open.

@@ -105,20 +105,17 @@ export function pickFiles(defaults = {}, { directory = false } = {}) {
 }
 
 // ---------- quick capture ----------
-export async function quickCapture(kind = 'task') {
-  const m = /^#\/(?:course|summary)\/(\d+)/.exec(location.hash);
+export async function quickCapture(kind = 'note') {
+  const m = /^#\/course\/(\d+)/.exec(location.hash);
   const cid = m ? +m[1] : '';
   const v = await dialog('הוספה מהירה', html`
     <div class="seg" role="radiogroup" aria-label="סוג">
-      ${[['task', 'משימה'], ['note', 'פתק'], ['link', 'קישור'], ['file', 'קובץ']].map(([k, l]) => html`<label class="seg-item"><input type="radio" name="kind" value="${k}" ${k === kind ? raw('checked') : ''}> ${l}</label>`)}
+      ${[['note', 'פתק'], ['link', 'קישור'], ['file', 'קובץ']].map(([k, l]) => html`<label class="seg-item"><input type="radio" name="kind" value="${k}" ${k === kind ? raw('checked') : ''}> ${l}</label>`)}
     </div>
-    <label>כותרת<input name="title" dir="auto" autofocus placeholder="למשל: לפתור שאלה 3 בתרגיל 2"></label>
+    <label>כותרת<input name="title" dir="auto" autofocus placeholder="למשל: הערות לשיעור 3"></label>
     <label data-for="note">תוכן<textarea name="body" rows="4" dir="auto"></textarea></label>
     <label data-for="link">כתובת<input name="url" type="url" dir="ltr" placeholder="https://"></label>
-    <div class="form-grid">
-      <label>קורס<select name="course_id">${courseOptions(cid)}</select></label>
-      <label data-for="task">תאריך יעד (לא חובה)<input type="date" name="due_date"></label>
-    </div>
+    <label>קורס<select name="course_id">${courseOptions(cid)}</select></label>
     <p class="hint" data-for="file">לאחר האישור ייפתח חלון לבחירת קבצים.</p>`, {
     submit: 'הוספה',
     onMount(d) {
@@ -130,7 +127,6 @@ export async function quickCapture(kind = 'task') {
   if (!v) return;
   const course_id = v.course_id ? Number(v.course_id) : null;
   if (v.kind === 'file') return pickFiles({ course_id });
-  if (v.kind === 'task') { await create('tasks', { title: v.title.trim(), course_id, due_date: v.due_date || null, origin: 'capture' }); toast('המשימה נוספה'); return refresh(); }
   if (v.kind === 'note') { const r = await create('resources', { title: v.title.trim(), kind: 'note', source: 'me', role: 'notes', course_id, body: v.body || '' }); location.hash = `#/r/${r.id}`; return reload(); }
   if (v.kind === 'link') { await create('resources', { title: v.title.trim() || v.url, kind: 'link', url: v.url, source: 'other', course_id }); toast('הקישור נשמר'); return refresh(); }
 }
