@@ -1,0 +1,20 @@
+{
+  "name": "ijos",
+  "version": "1.0.0-rc.1",
+  "private": true,
+  "type": "module",
+  "description": "IJOS (Ido Joffe's OS): a local-first Hebrew study workspace for university students. כל התואר. מקום אחד.",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js --open",
+    "serve": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-force-exit --test-timeout=60000 \"test/*.test.js\""
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Joffe2001/IJOS.git"
+  }
+}

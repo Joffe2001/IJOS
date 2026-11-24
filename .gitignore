@@ -1,0 +1,23 @@
+# Personal data: database, imported files, backups, exports. Never commit.
+data/
+data-*/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+ijos-backup-*.zip
+study-os-backup-*.zip
+ijos-notes-*.zip
+pre-restore-*.db
+# Local tooling and machine-specific caches
+.impeccable/
+**/.impeccable/
+.claude/
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
+test-results/
+.DS_Store
+Thumbs.db
